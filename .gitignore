@@ -1,0 +1,35 @@
+# Secrets and local config — never commit
+.env
+.env.*
+*.key
+*.pem
+secrets/
+config/local*.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Data and generated outputs
+*.parquet
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+jarvis-data/
+reports/
+incidents/
+agent-out/
+
+# Legacy artefacts (model pickles and datasets stay out of the repo)
+*.pkl
+*.zip
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

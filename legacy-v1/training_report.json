@@ -1,0 +1,24 @@
+{
+  "created_utc": "2025-07-29T23:20:59Z",
+  "model_dir": "/content/jarvis_models/tsla_v1",
+  "test_metrics": {
+    "regression": {
+      "spearman": 0.9988706941626052,
+      "MAE": 0.0014726071126397948,
+      "RMSE": 0.0023709619358566734
+    },
+    "updown": {
+      "AUC": 1.0,
+      "Accuracy": 1.0,
+      "F1": 1.0
+    },
+    "bigmove": {
+      "AUC": 0.9
+    },
+    "backtest_total_return": {
+      "reg_long": 0.26023575200315063,
+      "updown_ls": 0.6081604648940544,
+      "bigmove_cond_long": 0.0
+    }
+  }
+}

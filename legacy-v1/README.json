@@ -1,0 +1,33 @@
+{
+  "version": "tsla_v1",
+  "run_datetime": "2025-07-30 00:06:46",
+  "ticker": "TSLA",
+  "feature_csv": "TSLA_master_daily_features_lag1.csv",
+  "feature_lists": [
+    "feature_list_reg.pkl",
+    "feature_list_cls.pkl",
+    "feature_list_big.pkl"
+  ],
+  "model_files": [
+    "xgb_reg.pkl",
+    "xgb_cls.pkl",
+    "xgb_bigmove.pkl",
+    "feature_list_reg.pkl",
+    "feature_list_cls.pkl",
+    "feature_list_big.pkl",
+    "scaler.pkl"
+  ],
+  "shap_files": [
+    "shap_test_reg.csv",
+    "shap_test_updown.csv",
+    "shap_test_bigmove.csv"
+  ],
+  "equity_curves": [
+    "backtest_equity_reg.csv",
+    "backtest_equity_updown.csv",
+    "backtest_equity_bigmove.csv"
+  ],
+  "test_metrics": true,
+  "train_report": false,
+  "notes": "All artifacts generated for Phase 3, TSLA daily prototype."
+}

@@ -1,0 +1,9 @@
+lightgbm
+shap
+scikit-learn
+pandas
+numpy
+pandas_market_calendars
+dateparser
+xgboost
+openai
