@@ -36,3 +36,14 @@ One dated entry per meaningful step. Newest at the bottom. Append; do not rewrit
 - GitHub repository `jarvis` created; vision documents, research, design tournament, review and redacted legacy v1
   code committed. Collaboration workflow in `CONTRIBUTING.md`.
 - Next: discussion of the open warnings; then milestone M0.
+
+## 2026-10-08 — Owner-directed autonomous design proposal
+
+- Owner clarified the product goal: retain the original Observe/Understand/Forecast/Decide/Execute/Learn workflow
+  and JARVIS's local news, social and SEC information features while scaling from TSLA to liquid equities and spot
+  BTC/ETH. Claude and Codex are development tools, not live trading decision makers.
+- Chose hours-to-days opportunities, a broad cheap scan with a deep shortlist, near-zero metered spend, bounded
+  automatic model promotion, and local Windows operation with explicit recovery after missed uptime.
+- Added `AUTONOMOUS_ARCHITECTURE.md` and `docs/04-autonomous-design/` for the new proposal, diagrams, role mapping,
+  decisions and milestone gates. The October 2 `ARCHITECTURE.md` remains as historical evidence. No autonomous
+  trading implementation or live account connection has been created.

@@ -1,68 +1,74 @@
-# JARVIS — a personal financial co-pilot
+# JARVIS — local autonomous investing research and trading
 
-JARVIS started as a TSLA-only chatbot backed by XGBoost models (the `legacy-v1/` folder, originally a Hugging Face
-Space). It is being redesigned into an end-to-end personal investing system: a deterministic money engine that
-computes and gates every order, surrounded by a team of Claude agents that build, review, explain, research and
-triage — but never decide, size or time an order.
+JARVIS is a **proposed**, owner-only system for finding and managing opportunities in liquid US equities and spot BTC/ETH. It follows the original vision's **Observe → Understand → Forecast → Decide → Execute → Learn** loop: collect market and information events, create trustworthy features, find candidates, choose among tested strategies, apply hard risk limits, execute eligible orders, and learn from recorded outcomes. The first target is opportunities lasting **hours to days**, not a promise of constant profit or high-frequency trading.
 
-**Status (October 2026): design phase. The architecture has not yet been approved by the owner, and no
-implementation code exists yet.** The next step is a discussion of the open warnings listed at the bottom of this
-page, then milestone M0.
+**Project status (October 2026): documentation and legacy prototype only.** The autonomous engine, broker adapter, learning loop, and runtime agents described below do not exist yet. Do not connect a live account to the legacy code. The current branch documents the revised direction before implementation or repository reorganization.
 
 ## Start here
 
-| Read | What it is |
+| Read | Purpose |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The current proposed design: components, the agent roster, the runtime workflow, risk gate, validation gates, budget, build plan, open items, references |
-| [docs/00-original-vision/](docs/00-original-vision/) | The owner's three original design documents (v1, v2, v3) and the diagrams, plus a summary of the legacy v1 system and the binding constraints |
-| [docs/01-research/00-gap-analysis.md](docs/01-research/00-gap-analysis.md) | What 23 fact-checked research briefs established, what they contradicted in the original documents, and what stayed open |
-| [docs/02-design-tournament/FINAL-design.md](docs/02-design-tournament/FINAL-design.md) | The previous design (winner of a five-proposal tournament). Superseded by `ARCHITECTURE.md` wherever they differ |
-| [docs/03-review/](docs/03-review/) | Ten paper-grounded specialist reviews, the four-seat panel positions and the two verification passes that produced `ARCHITECTURE.md` |
-| [docs/LOG.md](docs/LOG.md) | Project log: what was done, when, and why |
+| [Autonomous architecture](AUTONOMOUS_ARCHITECTURE.md) | Current proposed product, data cadences, decision flow, local storage, risk boundaries and learning loop. |
+| [Architecture diagrams](docs/04-autonomous-design/DIAGRAMS.md) | Visual map of the two data queues and of one candidate's path to a possible order. |
+| [Delivery roadmap](docs/04-autonomous-design/ROADMAP.md) | Build sequence, exit tests and failure cases. |
+| [Revision decisions](docs/04-autonomous-design/DECISIONS.md) | What changed from the monthly design and where all 18 original v3 functions went. |
+| [Original vision](docs/00-original-vision/) | The owner's v1/v2/v3 workflow and legacy-system assessment. |
+| [October 2 architecture](ARCHITECTURE.md) | Historical, paper-grounded monthly recommendation proposal. Retained for its evidence and open questions; its runtime scope is superseded by the autonomous proposal. |
+| [Research and review](docs/01-research/) · [Design tournament](docs/02-design-tournament/) · [Specialist review](docs/03-review/) | The earlier evidence and reasoning; claims tagged RECALLED, SNIPPET or UNVERIFIED still need checking. |
+| [Project log](docs/LOG.md) · [Contributing](CONTRIBUTING.md) | Chronology and collaboration rules. |
 
-## How the design was produced
+## Repository map
 
-1. **Understand** — the legacy Space was read line by line (see `docs/00-original-vision/context-current-state-and-constraints.md` for its defects, including target leakage in the v1 models).
-2. **Evidence** — 17 research briefs, each written against primary sources and independently fact-checked, then 6 gap-fill briefs (`docs/01-research/`).
-3. **Tournament** — five architectures written from different philosophies, attacked by nine critics, synthesised and red-teamed (`docs/02-design-tournament/`).
-4. **Review** — ten specialists re-examined the winner against research papers, a four-seat panel voted on 76 proposed changes, and two verifiers checked the rewrite (`docs/03-review/`).
+```text
+README.md                         Start here and current project status
+AUTONOMOUS_ARCHITECTURE.md       Current proposed product and technical design
+docs/04-autonomous-design/       Diagrams, decisions, delivery roadmap
+ARCHITECTURE.md                  Historical October 2 monthly proposal
+docs/00-original-vision/        Original v1/v2/v3 workflow and legacy assessment
+docs/01-research/               Earlier evidence and gap analysis
+docs/02-design-tournament/      Earlier competing designs and critiques
+docs/03-review/                 Earlier specialist and verification reviews
+docs/LOG.md                     Dated decision history
+legacy-v1/                      Reference TSLA prototype, not an active engine
+```
 
-Every brief and review tags its sources as fetched, recalled or unverified. Treat anything tagged RECALLED,
-SNIPPET or UNVERIFIED as unconfirmed.
+There is currently no autonomous runtime to install or launch. The roadmap describes the order in which code, data adapters, strategy specs and tests would be added.
 
-## Binding constraints
+## How a decision would work
 
-- Owner is a US resident (Texas); $1,000–$10,000 of the owner's own money; no outside investors.
-- Near-zero monthly budget for data and LLM calls (the design runs at $0 metered spend on free data tiers and the owner's existing Claude subscription).
-- Windows 11 laptop with 8 GB RAM; solo developer plus Claude agents.
-- No LLM output may decide, size or time an order.
+```mermaid
+flowchart LR
+  A["Market and broker data"] --> C["Point-in-time features"]
+  B["Filings, news and social events"] --> Q["Background local analysis"] --> C
+  C --> S["Cheap scan and deep shortlist"] --> P["Approved strategy or FLAT"]
+  P --> R["Deterministic risk gate"] -->|"ALLOW"| O["Durable order and broker reconciliation"]
+  R -->|"BLOCK / SAFE"| L["Local decision ledger"]
+  O --> L --> E["Outcome review and challenger testing"]
+  E -->|"Versioned, gated promotion"| P
+```
 
-## The agents (as currently proposed)
+The information pipeline retains JARVIS's original local summarisation, event tagging, sentiment and feature-engineering idea. It runs **separately** from the timely market/order path. It processes each relevant item once, prioritises held assets and shortlisted candidates, and publishes timestamped features. A positive headline or high sentiment score is **not** an order; a strategy must show useful evidence after costs, then pass the risk gate. The old TSLA models are reference material, not trusted predictors: their saved results contain target leakage.
 
-| Agent | Purpose | How it runs |
+| Lane | Intended first-version rhythm | Limitation |
 |---|---|---|
-| Builder | Writes all code, tests, schemas and runbooks | Attended Claude Code sessions |
-| Reviewer | Pre-mortem on risky code changes, strategy specs and limit loosenings | Attended, fresh context |
-| Strategy Lab (Spec Clerk, Replication Analyst) | Pre-registered strategy specs, harness runs, replication reports | Attended, monthly at most |
-| Narrator | Weekly memo from typed facts, validated by code before sending | Scheduled (the only scheduled agent) |
-| Ledger Analyst | Answers questions over the ledger with the query shown | On demand |
-| Change-Watch | Explains changes on watched vendor/terms pages | When a page hash changes |
-| Incident Triage | Explains SAFE/HALT events and drafts the fix | When an incident email arrives |
-| Reader | Typed events from SEC filings for a watch list | Dormant; opt-in |
+| Equities | Hourly broad scan during regular market hours; daily context; deep text analysis for a small shortlist. | On Alpaca Basic, real-time equity data is IEX-only and full-market data is delayed by 15 minutes. [Alpaca plans](https://docs.alpaca.markets/us/docs/about-market-data-api). |
+| Spot BTC/ETH | Collect live minute bars while online; make first-version strategy decisions on hourly features; monitor orders and exits while online. | Crypto trading eligibility, fees, venue and quote behaviour need an account probe. The laptop may miss events while asleep. |
+| Learning | Review outcomes after each strategy's horizon; periodically evaluate challenger versions in replay and shadow. | One profitable or losing trade is not enough to rewrite a strategy. New families and a paper-to-live switch need owner approval. |
 
-See `ARCHITECTURE.md` section 4 for tools, permissions, outputs, checks and the "never-do" list.
+## What is automatic and what the owner controls
 
-## Open warnings to discuss before approval
+Within a signed operating envelope, JARVIS is intended to scan, select an approved strategy, size and submit a permitted order, monitor the position, and record an outcome **without manual entry of every trade**. The owner sets the allowable universe, risk and loss limits, large-order threshold, and live permission; can halt trading immediately; and approves new strategy families or loosening of the envelope. The risk governor and broker reconciliation are deterministic. Claude and Codex may help build and review the software but have no live broker or order authority.
 
-1. Anthropic's consumer terms may restrict using Claude in connection with securities trading; the clause must be read first-hand (ARCHITECTURE.md, open item O4).
-2. Plan usage, not dollars, is the scarce resource; it must be measured before agents are added.
-3. Several Alpaca behaviours need probes or an email in week one (fractional limit orders, activity CSV export, IRA fee, crypto availability in Texas).
-4. The legacy Space committed an OpenAI API key; it must be revoked at the provider (it is redacted in `legacy-v1/`).
-5. The trend strategy is expected to lose money after tax in a taxable account and runs in shadow only.
+The first deployment is paper-only. A live pilot follows only after data licences and account permissions are verified, point-in-time replay and crash/recovery drills pass, the owner signs a risk envelope, and broker state reconciles cleanly. Paper fills do not establish live returns or execution quality. [Alpaca's paper-trading limits](https://docs.alpaca.markets/us/v1.4.2/docs/paper-trading).
 
-## Collaborating
+## Data, storage and local runtime
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: never commit to `main` directly; branch, open a pull
-request, and record decisions in `docs/LOG.md`.
+The proposed runtime is one lean Python service on the owner's Windows 11 laptop, with bounded background text processing. **SQLite** holds durable decisions, candidates, orders, fills, outcomes and work queues; **Parquet** holds larger market/feature history; immutable model artifacts record each trained version. Secrets stay in the OS credential store, and encrypted local backups are tested. The code repository is not a live-account ledger. On restart, JARVIS reconciles the broker first and expires old opportunities rather than chasing them.
 
-Nothing in this repository is investment, tax or legal advice.
+The original 18-role workflow is preserved as **18 responsibilities**, mapped to code, models or research agents in the [decision record](docs/04-autonomous-design/DECISIONS.md). The number of LLM processes is not a measure of intelligence. No trading system can guarantee steady returns; each proposed source, feature and strategy must earn its place through reproducible, cost-aware tests.
+
+## Legacy material and safety
+
+[`legacy-v1/`](legacy-v1/) is the TSLA Gradio chatbot and saved artifacts, not a production starting point. The owner's archived Colab notebooks additionally demonstrate portfolio inputs and local price/news collection, summarisation, tagging and CSV features; the archive contains an exposed search API key. The legacy Space previously contained an OpenAI key. **Revoke any still-active exposed keys before account setup.** Never commit keys, account numbers, tax IDs, or private trading records.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing edits. This repository describes software and research; it is not investment, tax or legal advice.

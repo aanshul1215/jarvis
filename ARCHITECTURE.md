@@ -1,5 +1,7 @@
 # JARVIS: Final Architecture
 
+> **Historical proposal (2026-10-02).** The owner subsequently clarified that JARVIS should restore its information-analysis foundation and autonomously scan, select, execute and learn across equities and spot crypto. The [autonomous architecture proposal](AUTONOMOUS_ARCHITECTURE.md) is now the current design direction. This document is preserved for its evidence, review history and earlier decisions; its monthly manual-order workflow is not the current product target.
+
 Chief architect, final revision after two verification passes, 2026-10-02. This document stands alone and replaces `FINAL-design.md` wherever the two disagree. Section 17 lists each verification must-fix and how it was resolved.
 
 **How to read the labels**
