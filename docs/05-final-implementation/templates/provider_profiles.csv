@@ -1,0 +1,1 @@
+schema_version,record_id,recorded_at_utc,asset_id,asset_class,strategy_id,strategy_version,model_id,model_version,opportunity_id,trade_id,event_type,source_id,source_event_at_utc,first_available_at_utc,processing_latency_ms,status,reason_codes,correlation_id,profile_id,profile_version,plan,equity_feed,crypto_location,key_alias,permission_result,checked_at_utc

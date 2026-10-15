@@ -31,7 +31,7 @@ flowchart LR
     PM["Position and exit monitor"]
   end
   subgraph L["LEARN / AUDIT"]
-    DB[("Local SQLite decision and trade ledger")]
+    DB[("Local JSONL decision and trade journal")]
     PQ[("Parquet market and feature history")]
     EV["Outcome attribution and challenger evaluation"]
     REG["Versioned model registry"]

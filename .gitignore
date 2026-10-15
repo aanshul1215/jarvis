@@ -16,16 +16,25 @@ venv/
 
 # Data and generated outputs
 *.parquet
+*.jsonl
+*.xlsx
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
 jarvis-data/
+JARVIS_HOME/
+local-data/
+backups/
+models/artifacts/
 reports/
 incidents/
 agent-out/
 
 # Legacy artefacts (model pickles and datasets stay out of the repo)
 *.pkl
+*.joblib
+*.onnx
+*.pt
 *.zip
 
 # OS / editor

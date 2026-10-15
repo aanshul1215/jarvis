@@ -2,12 +2,15 @@
 
 JARVIS is a **proposed**, owner-only system for finding and managing opportunities in liquid US equities and spot BTC/ETH. It follows the original vision's **Observe → Understand → Forecast → Decide → Execute → Learn** loop: collect market and information events, create trustworthy features, find candidates, choose among tested strategies, apply hard risk limits, execute eligible orders, and learn from recorded outcomes. The first target is opportunities lasting **hours to days**, not a promise of constant profit or high-frequency trading.
 
-**Project status (October 2026): documentation and legacy prototype only.** The autonomous engine, broker adapter, learning loop, and runtime agents described below do not exist yet. Do not connect a live account to the legacy code. The current branch documents the revised direction before implementation or repository reorganization.
+**Project status (15 October 2026): documentation and legacy prototype only.** The autonomous engine, broker adapter, learning loop, storage adapter and runtime agents described below do not exist yet. Do not connect a live account to the legacy code. `branch-3` carries the proposed final implementation plan; it does not authorize live trading.
 
 ## Start here
 
 | Read | Purpose |
 |---|---|
+| [Final implementation plan](FINAL_IMPLEMENTATION_PLAN.md) | Canonical proposed A0–A5 build sequence, 18 responsibilities, research/evaluation, risk and execution boundaries. |
+| [File-based storage contract](docs/05-final-implementation/LOCAL_STORAGE_AND_SCHEMAS.md) | V1 CSV/Parquet/JSON/JSONL layout, schemas, recovery and future acceptance tests. Supersedes earlier SQLite proposals for V1. |
+| [Execution register](EXECUTION.md) · [engineering log](LOG.md) | Current next ticket and evidence actually collected. |
 | [Autonomous architecture](AUTONOMOUS_ARCHITECTURE.md) | Current proposed product, data cadences, decision flow, local storage, risk boundaries and learning loop. |
 | [Architecture diagrams](docs/04-autonomous-design/DIAGRAMS.md) | Visual map of the two data queues and of one candidate's path to a possible order. |
 | [Delivery roadmap](docs/04-autonomous-design/ROADMAP.md) | Build sequence, exit tests and failure cases. |
@@ -22,6 +25,9 @@ JARVIS is a **proposed**, owner-only system for finding and managing opportuniti
 ```text
 README.md                         Start here and current project status
 AUTONOMOUS_ARCHITECTURE.md       Current proposed product and technical design
+FINAL_IMPLEMENTATION_PLAN.md     Canonical branch-3 implementation plan
+EXECUTION.md · LOG.md            Next ticket and engineering evidence
+docs/05-final-implementation/   File schemas, probes, setup and acceptance
 docs/04-autonomous-design/       Diagrams, decisions, delivery roadmap
 ARCHITECTURE.md                  Historical October 2 monthly proposal
 docs/00-original-vision/        Original v1/v2/v3 workflow and legacy assessment
@@ -63,7 +69,7 @@ The first deployment is paper-only. A live pilot follows only after data licence
 
 ## Data, storage and local runtime
 
-The proposed runtime is one lean Python service on the owner's Windows 11 laptop, with bounded background text processing. **SQLite** holds durable decisions, candidates, orders, fills, outcomes and work queues; **Parquet** holds larger market/feature history; immutable model artifacts record each trained version. Secrets stay in the OS credential store, and encrypted local backups are tested. The code repository is not a live-account ledger. On restart, JARVIS reconciles the broker first and expires old opportunities rather than chasing them.
+The proposed runtime is one lean Python service on the owner's Windows 11 laptop, with bounded background text processing. **Append-only JSONL** holds operational decisions, orders, fills and outcomes; **Parquet** holds market/feature history; **JSON** holds configuration and model registries; **CSV** and optional XLSX provide reports. Native model artifacts are versioned and hashed. Secrets stay in the OS credential store, and encrypted local backups are tested. The code repository is not a live-account ledger. On restart, JARVIS reconciles the broker first and expires old opportunities rather than chasing them.
 
 The original 18-role workflow is preserved as **18 responsibilities**, mapped to code, models or research agents in the [decision record](docs/04-autonomous-design/DECISIONS.md). The number of LLM processes is not a measure of intelligence. No trading system can guarantee steady returns; each proposed source, feature and strategy must earn its place through reproducible, cost-aware tests.
 

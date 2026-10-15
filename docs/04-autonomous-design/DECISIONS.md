@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-08. **Status:** proposal for review, not a deployed system. This record explains changes to the [October 2 architecture](../../ARCHITECTURE.md). It preserves that document and the [v1/v2/v3 owner vision](../00-original-vision/) as historical sources. The owner stated that the product should automatically discover and act on opportunities in equities and crypto, run locally, learn from recorded outcomes, and retain JARVIS's information-analysis foundation. The previous monthly, manually entered ETF order list does not meet that goal.
 
+**2026-10-15 storage amendment:** the [branch-3 file-based contract](../05-final-implementation/LOCAL_STORAGE_AND_SCHEMAS.md) controls V1 storage. All other role and trading boundaries below remain proposed.
+
 ## Decisions and rationale
 
 | Topic | Revised direction | What remains constrained |
@@ -12,7 +14,7 @@
 | TSLA heritage | Retain local collection, news summarization, social and SEC feature engineering, forecasting and explanation as distinct functions. Rebuild with point-in-time data and independent evaluation. | Old XGBoost results are invalidated by target leakage; old prompts, data and SHAP outputs are not live trading evidence. |
 | Data clocks | Equity delayed consolidated bars for hour-scale signals; live crypto data aggregated from minute bars; background text/event processing only for held or shortlisted assets. | Text never blocks a price-only trade. Free equity real-time feed is IEX only; laptop downtime loses short-lived opportunities. |
 | Learning | Local candidate/trade/outcome ledger; automatic retraining and champion–challenger comparison; bounded promotion inside an approved strategy family, with rollback. | One trade does not prove or disprove a model. Insufficient evidence remains inconclusive/shadow. |
-| Storage/runtime | SQLite operational state and audit, Parquet history, immutable model artifacts, encrypted local backup. One lean local service with bounded workers. | No need for the v3 Redis/Postgres/Docker/LangGraph stack on an 8 GB laptop. Reliable 24/7 operation would require a later hosting decision. |
+| Storage/runtime | Append-only JSONL operational journal, Parquet history, JSON registries, CSV reports, immutable model artifacts and encrypted local backup. One lean local service with bounded workers. | No need for the v3 Redis/Postgres/Docker/LangGraph stack on an 8 GB laptop. Reliable 24/7 operation would require a later hosting decision. |
 
 **Evidence tension:** The October 2 review concluded that free data and this account size favoured daily-to-monthly decisions. The owner's hours-to-days target is therefore an experiment, not an established edge. Phase A3 must compare each shorter-horizon strategy with a price-only baseline after spread, fees, slippage, downtime and applicable taxes. If it fails, the system stays paper/shadow or FLAT; the cadence does not justify live trading by itself.
 
@@ -39,7 +41,7 @@ An entry below describes a **logical function**, not necessarily an LLM agent or
 | 15. Capital Governor / Risk Agent | Deterministic, default-deny policy and kill/SAFE states. |
 | 16. Execution Agent | Durable, idempotent broker adapter with fill and cancel state. |
 | 17. Position Manager | Broker-reconciled monitoring and predefined exits. |
-| 18. Ledger / Review Agent | SQLite audit, outcome attribution, challenger evaluation and owner report. |
+| 18. Ledger / Review Agent | JSONL audit and CSV reports, outcome attribution, challenger evaluation and owner report. |
 
 ## Explicitly unresolved dependencies
 

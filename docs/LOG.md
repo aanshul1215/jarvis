@@ -47,3 +47,12 @@ One dated entry per meaningful step. Newest at the bottom. Append; do not rewrit
 - Added `AUTONOMOUS_ARCHITECTURE.md` and `docs/04-autonomous-design/` for the new proposal, diagrams, role mapping,
   decisions and milestone gates. The October 2 `ARCHITECTURE.md` remains as historical evidence. No autonomous
   trading implementation or live account connection has been created.
+
+## 2026-10-15 — Final plan and file-based V1 storage decision
+
+- Owner approved CSV reports/opportunities/research, Parquet market and feature history, JSON configuration and
+  registries, append-only JSONL operational events, native model artifacts and optional XLSX exports. SQLite and
+  other databases are not V1 dependencies; older SQLite proposals are superseded for initial implementation.
+- `branch-3` is based on `branch-1`. Added the proposed Final Implementation Plan, local storage/schema contract,
+  header-only CSV templates, A0–A5 acceptance matrix, owner/setup/probe and incident documents, plus root
+  `EXECUTION.md` and `LOG.md`. No trading engine, database, broker connection or acceptance test was implemented.

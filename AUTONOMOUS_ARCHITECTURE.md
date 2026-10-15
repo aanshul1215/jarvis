@@ -15,7 +15,7 @@ JARVIS is a local, owner-only system for finding and managing opportunities in l
 
 ## 2. Responsibilities and data flow
 
-The [architecture and decision diagrams](docs/04-autonomous-design/DIAGRAMS.md) render on GitHub. One small local process can run the scheduler, collectors, scanner, decision engine, and broker adapter with bounded background workers. SQLite supplies durable queues and transactional state; Parquet stores larger historical series. No Redis, LangGraph, Docker, PostgreSQL, or always-on LLM is required for the first version.
+The [architecture and decision diagrams](docs/04-autonomous-design/DIAGRAMS.md) render on GitHub. One small local process can run the scheduler, collectors, scanner, decision engine, and broker adapter with bounded background workers. A locked append-only JSONL journal supplies durable operational history; Parquet stores larger historical series. JSON registries and CSV reports complete the local file store. No SQLite, Redis, LangGraph, Docker, PostgreSQL, cloud database or always-on LLM is required for V1. The [final storage contract](docs/05-final-implementation/LOCAL_STORAGE_AND_SCHEMAS.md) supersedes the earlier storage choice.
 
 | Responsibility | Input → output | Decision boundary |
 |---|---|---|
@@ -66,8 +66,9 @@ The strategy's estimated edge must be measured out of sample and after expected 
 
 | Store | Contents and rule |
 |---|---|
-| SQLite (WAL, one writer) | Asset/event index, dedup keys, feature metadata, candidates, strategy registry, owner policy, order intents, broker events, fills, reconciliation, outcomes, model evaluations, durable work queues. Append-only decision events retain previous versions rather than overwriting them. |
-| Parquet | Historical market bars and derived numerical features, partitioned by asset class, asset, and date. Provenance and source licences remain in SQLite. |
+| Append-only JSONL (one locked writer) | Candidates, order intents, risk decisions, broker events, fills, reconciliation, outcomes and health events. Durable intent precedes broker submission; replay rebuilds projections. |
+| Parquet | Historical market bars and derived numerical features, partitioned by asset class, asset, and date. Provenance and source licences are recorded in file manifests and journal events. |
+| JSON, CSV and native artifacts | Versioned configuration/model registry and manifests; generated trading/research reports; immutable trained models. |
 | Model registry on disk | Immutable artifact, training cutoff, input schema/hash, software version, evaluation report, status (`challenger`, `shadow`, `pilot`, `champion`, `retired`). |
 | Local reports and backups | Read-only owner dashboard/report; daily encrypted backup and tested restore. Store no API keys in backup manifests or Git. Git stores code, specs, decisions and test fixtures, **not** the live account ledger. |
 

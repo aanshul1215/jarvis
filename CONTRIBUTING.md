@@ -14,6 +14,7 @@ This project is logged on GitHub so that every decision can be reconstructed lat
 | Content | Location |
 |---|---|
 | The current proposed design | `AUTONOMOUS_ARCHITECTURE.md` and `docs/04-autonomous-design/` (edit through a pull request; record the reason in `docs/LOG.md`) |
+| Canonical branch-3 build plan | `FINAL_IMPLEMENTATION_PLAN.md` and `docs/05-final-implementation/`; the file-based V1 storage decision supersedes prior SQLite text |
 | The October 2 monthly proposal | `ARCHITECTURE.md` — historical evidence and review record; add new decisions rather than rewriting its history |
 | Research, reviews, decisions already made | `docs/` — append, do not rewrite history. Add a new dated file rather than editing a verified brief |
 | Project log | `docs/LOG.md` — one dated entry per meaningful step |
