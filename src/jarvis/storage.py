@@ -92,6 +92,9 @@ class StorageAdapter(ABC):
     @abstractmethod
     def export_csv(self, name: str, rows: list[dict[str, Any]]) -> Path: ...
 
+    @abstractmethod
+    def save_information(self, record_id: str, raw: dict[str, Any], feature: dict[str, Any]) -> Path: ...
+
 
 class LocalStorage(StorageAdapter):
     """Only the lock holder may append. Open the reader with writer=False."""
@@ -299,6 +302,15 @@ class LocalStorage(StorageAdapter):
         digest = atomic_bytes(path, out.getvalue().encode("utf-8"))
         atomic_bytes(path.with_suffix(".manifest.json"), _canonical({"schema_version": 1, "sha256": digest, "rows": len(rows)}) + b"\n")
         return path
+
+    def save_information(self, record_id: str, raw: dict[str, Any], feature: dict[str, Any]) -> Path:
+        self._require_writer()
+        identifier = _safe_name(record_id)
+        raw_path = self.home / "information" / "raw" / f"{identifier}.json"
+        feature_path = self.home / "information" / "features" / f"{identifier}.json"
+        atomic_bytes(raw_path, _canonical(raw) + b"\n")
+        atomic_bytes(feature_path, _canonical(feature) + b"\n")
+        return feature_path
 
     def save_features(self, snapshots: Iterable[FeatureSnapshot]) -> Path:
         self._require_writer()

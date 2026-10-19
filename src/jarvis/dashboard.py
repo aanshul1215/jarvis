@@ -8,16 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .storage import LocalStorage, StorageError
-
-
-DESKS = {
-    "Market Intelligence": ["Data Trust", "Market / Technical", "Flow / Microstructure", "News & Event",
-                            "Fundamental / Macro", "Crypto", "Manipulation Surveillance", "Opportunity Scanner"],
-    "Quantitative Research": ["Bull / Bear", "Goal & Capital Planner"],
-    "Model Intelligence & Validation": ["Model Ensemble", "Confidence Calibrator", "Ledger / Review"],
-    "Autonomous Trading": ["Strategy / Portfolio", "Execution", "Position Manager"],
-    "Risk & Governance": ["Orchestrator / Supervisor", "Capital Governor / Risk"],
-}
+from .roles import ROLES
 
 
 def render(home: Path, mode: str = "OFF") -> str:
@@ -31,10 +22,14 @@ def render(home: Path, mode: str = "OFF") -> str:
         error = ""
     by_type = {event["event_type"] for event in events}
     cards = []
-    for desk, roles in DESKS.items():
-        items = "".join(f"<li><span class='dot {'active' if any(r.lower().split()[0] in t.lower() for t in by_type) else ''}'></span>"
-                        f"{html.escape(r)} <small>{'RECORDED' if any(r.lower().split()[0] in t.lower() for t in by_type) else 'UNAVAILABLE'}</small></li>"
-                        for r in roles)
+    for desk in dict.fromkeys(role.department for role in ROLES):
+        roles = [role for role in ROLES if role.department == desk]
+        items = ""
+        for role in roles:
+            observed = bool(by_type.intersection(role.event_types))
+            status = "RECORDED" if observed else role.implementation
+            items += f"<li title='{html.escape(role.purpose)}'><span class='dot {'active' if observed else ''}'></span>" \
+                     f"{html.escape(role.name)} <small>{html.escape(status)}</small></li>"
         cards.append(f"<section><h2>{html.escape(desk)}</h2><ul>{items}</ul></section>")
     timeline = "".join(
         f"<tr><td>{html.escape(e['at'])}</td><td>{html.escape(e['event_type'])}</td>"

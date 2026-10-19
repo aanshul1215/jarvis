@@ -44,3 +44,11 @@ Append dated entries with branch, commit, commands actually run, evidence, failu
 - Commands: `.venv/bin/python -m pytest -q` **18 passed, 1 third-party deprecation warning**; `compileall` and `git diff --check` passed. The order-capable command and read-only dry-run both returned exit 2 with owner policy missing. A filename-only secret-pattern scan of new source, tests and setup docs returned no matches.
 - Initial editable install without build isolation failed because `.venv` lacked setuptools. Retried using the bundled Python runtime's setuptools on `PYTHONPATH`; the local editable wheel built and installed. This does not establish a fresh-clone installation.
 - Account-connected paper verification, private owner values, independent review, clean-clone install, and release approval remain open. No merge into `branch-3` while these gates are open.
+
+## 2026-10-18 — Responsibility map and local information path
+
+- Published the feature tree to GitHub branch `feature/jarvis-v1-implementation` through the connected GitHub API after the Git CLI push failed for missing HTTPS credentials. The remote commit `1e6b51a8bd01474f3a4afb9dec083ef75afad8ff` has the exact local Git tree `6b70fd252b602a2a064c88f2ad9393aaaf6459d1`; `branch-3` and `main` were not changed.
+- Added typed purpose/input/output/evidence definitions for all 18 logical responsibilities. The dashboard now derives recorded state from actual event types and shows partial/unavailable status explicitly.
+- Added a separate local information-ingestion command using a dated JSON document, deterministic extractive summary, unvalidated lexical counts, raw/feature JSON storage, and one `INFO_FEATURE` event per source document. It is scoped to a named asset and has no trade authority. The bundled sample is fictional.
+- Commands: `.venv/bin/python -m pytest -q` **20 passed, 1 third-party deprecation warning**; `info-ingest --file info.example.json` completed on the fictional BTC/USD sample; `git diff --check` passed. No external source or broker order was contacted for this increment.
+- Remaining: SEC/news collectors and licensing, validated event models, account-connected paper/stream tests, full strategy discovery and model controls, and release gates. Commit and remote publication of this increment pending.

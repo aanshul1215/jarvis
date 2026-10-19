@@ -19,6 +19,7 @@ from .market_data import AlpacaMarketData
 from .research import backtest_fixture, train_fixture
 from .review import review_outcomes
 from .runner import PaperDesk
+from .information import ingest, load_document
 from .risk import Governor, RiskPolicy
 from .storage import LocalStorage
 from .strategies import StrategyRegistry, baseline_specs
@@ -88,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis", description="JARVIS local research and paper desk")
     parser.add_argument("--home", help="JARVIS_HOME outside the Git checkout")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review"):
+    for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest"):
         command = commands.add_parser(name)
         if name in ("backtest", "train"):
             command.add_argument("--fixture", action="store_true", help="use labeled synthetic equity and crypto histories")
@@ -97,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--once", action="store_true", help="run one guarded paper decision cycle")
             command.add_argument("--loop", action="store_true", help="repeat guarded paper cycles")
             command.add_argument("--enable-orders", action="store_true", help="explicitly enable paper orders for this process")
+        if name == "info-ingest":
+            command.add_argument("--file", required=True, help="local dated JSON document to summarize")
     args = parser.parse_args(argv)
     if args.command == "doctor":
         print(json.dumps(doctor(Path(args.home) if args.home else (Path(os.environ["JARVIS_HOME"]) if os.environ.get("JARVIS_HOME") else None)), indent=2))
@@ -192,6 +195,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "review":
         with LocalStorage(_home(args)) as store:
             print(json.dumps(review_outcomes(store), indent=2))
+    elif args.command == "info-ingest":
+        with LocalStorage(_home(args)) as store:
+            print(json.dumps(ingest(store, load_document(Path(args.file))), indent=2))
     return 0
 
 

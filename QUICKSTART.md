@@ -15,9 +15,12 @@ export JARVIS_HOME="$HOME/jarvis-runtime"
 .venv/bin/python -m jarvis --home "$JARVIS_HOME" backtest --fixture
 .venv/bin/python -m jarvis --home "$JARVIS_HOME" train --fixture
 .venv/bin/python -m jarvis --home "$JARVIS_HOME" review
+.venv/bin/python -m jarvis --home "$JARVIS_HOME" info-ingest --file info.example.json
 .venv/bin/python -m jarvis --home "$JARVIS_HOME" dashboard
 ```
 
 On Windows PowerShell, replace `.venv/bin/python` with `.venv\Scripts\python.exe` and set `$env:JARVIS_HOME` to an absolute directory outside the checkout. The dashboard opens at `http://127.0.0.1:8765/`. `demo` uses a temporary directory unless `--home` is supplied. All demo and fixture results are synthetic.
 
 See [DEVELOPER_SETUP.md](DEVELOPER_SETUP.md) for paper credentials, private policy, and the guarded paper commands, and [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) for recovery. Runtime records stay in `JARVIS_HOME`, outside Git.
+
+Information ingestion is a separate local command. It produces an extractive summary and explicitly unvalidated lexical features for the asset named in the document. It does not trigger a trade. The bundled example is fictional.

@@ -1,0 +1,10 @@
+{
+  "asset_id": "BTC/USD",
+  "asset_class": "CRYPTO",
+  "source_id": "SYNTHETIC_EXAMPLE",
+  "source_url": "https://example.invalid/synthetic",
+  "published_at": "2026-10-01T12:00:00Z",
+  "first_available_at": "2026-10-01T12:01:00Z",
+  "category": "EXAMPLE",
+  "text": "Synthetic example for BTC/USD. This is a fictional document used to demonstrate local information summarization."
+}
