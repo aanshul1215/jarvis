@@ -1,0 +1,8 @@
+{
+  "assets": [
+    {"symbol": "AAPL", "asset_class": "EQUITY", "order_notional": 1},
+    {"symbol": "BTC/USD", "asset_class": "CRYPTO", "order_notional": 1}
+  ],
+  "strategy_versions": ["breakout-volume@1.0.0"],
+  "poll_seconds": 60
+}
