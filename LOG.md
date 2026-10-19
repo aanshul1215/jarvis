@@ -52,3 +52,8 @@ Append dated entries with branch, commit, commands actually run, evidence, failu
 - Added a separate local information-ingestion command using a dated JSON document, deterministic extractive summary, unvalidated lexical counts, raw/feature JSON storage, and one `INFO_FEATURE` event per source document. It is scoped to a named asset and has no trade authority. The bundled sample is fictional.
 - Commands: `.venv/bin/python -m pytest -q` **20 passed, 1 third-party deprecation warning**; `info-ingest --file info.example.json` completed on the fictional BTC/USD sample; `git diff --check` passed. No external source or broker order was contacted for this increment.
 - Remaining: SEC/news collectors and licensing, validated event models, account-connected paper/stream tests, full strategy discovery and model controls, and release gates. Commit and remote publication of this increment pending.
+
+## 2026-10-18 — Research validation increment
+
+- Added expanding walk-forward folds with one observation embargo, holdout probability-calibration bins, immutable artifact conflict detection, and a versioned local model registry. The registry records both constant and logistic models as `RESEARCH`; no training result can promote itself.
+- Commands: `.venv/bin/python -m pytest -q` **20 passed**; `train --fixture` completed for AAPL and BTC/USD and wrote the registry. The output is synthetic and does not establish real predictive performance. Account and release gates remain open.

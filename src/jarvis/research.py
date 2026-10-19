@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ from sklearn.preprocessing import StandardScaler
 from .contracts import AssetClass, Bar, FeatureSnapshot, iso, utc_now
 from .market import features_for, scan
 from .storage import LocalStorage, atomic_bytes
+from .storage import StorageError
 
 
 FEATURES = ("return_1", "momentum_5", "volatility_20", "relative_volume", "breakout_20", "trend_strength")
@@ -78,13 +80,61 @@ def _metrics(rows: list[Observation], probabilities, *, cost_bps: float) -> dict
     curve = np.cumprod(1 + net)
     peak = np.maximum.accumulate(np.r_[1.0, curve])[1:]
     losses = np.sort(net)[:max(1, math.ceil(len(net) * 0.05))]
+    calibration = []
+    for low, high in ((0, .25), (.25, .5), (.5, .75), (.75, 1.000001)):
+        mask = (predictions >= low) & (predictions < high)
+        if mask.any():
+            calibration.append({"probability_bin": f"{low:.2f}-{min(high,1):.2f}",
+                                "count": int(mask.sum()), "mean_prediction": float(predictions[mask].mean()),
+                                "observed_positive_rate": float(labels[mask].mean())})
     return {"n": len(rows), "trades": int(take.sum()), "accuracy": float(np.mean((predictions >= .5) == labels)),
             "brier": float(brier_score_loss(labels, predictions)),
             "log_loss": float(log_loss(labels, np.clip(predictions, 1e-6, 1 - 1e-6), labels=[0, 1])),
             "mean_net_return_per_observation": float(np.mean(net)),
             "compounded_net_return": float(curve[-1] - 1),
             "max_drawdown": float(np.min(curve / peak - 1)),
-            "expected_shortfall_5pct": float(np.mean(losses))}
+            "expected_shortfall_5pct": float(np.mean(losses)), "calibration": calibration}
+
+
+def _walk_forward(rows: list[Observation], prototype, cost_bps: float) -> list[dict]:
+    """Expanding training windows; each validation slice follows a one-row embargo."""
+    cutoff = int(len(rows) * .5)
+    stop = int(len(rows) * .8)
+    step = max(10, int(len(rows) * .1))
+    folds = []
+    while cutoff + 1 < stop:
+        training, validation = rows[:cutoff], rows[cutoff + 1:min(cutoff + 1 + step, stop)]
+        x, y = _xy(training)
+        if len(set(y)) < 2 or not validation:
+            break
+        model = deepcopy(prototype)
+        model.fit(x, y)
+        val_x, _ = _xy(validation)
+        folds.append({"train_end_at": iso(training[-1].snapshot.as_of),
+                      "validation_start_at": iso(validation[0].snapshot.as_of),
+                      "validation_end_at": iso(validation[-1].snapshot.as_of),
+                      "metrics": _metrics(validation, model.predict_proba(val_x)[:, 1], cost_bps=cost_bps)})
+        cutoff += step
+    return folds
+
+
+def _record_registry(store: LocalStorage, report: dict, rows: list[Observation]) -> None:
+    try:
+        registry = store.load_json("model-registry")
+    except FileNotFoundError:
+        registry = {"models": {}}
+    for name, result in report["models"].items():
+        key = f"{report['run_id']}:{name}"
+        item = {"model_id": name, "version": report["run_id"], "asset_id": report["asset_id"],
+                "asset_class": report["asset_class"], "status": "RESEARCH",
+                "feature_schema": list(FEATURES), "artifact": result["artifact"],
+                "sha256": result["sha256"], "holdout_start_at": iso(rows[int(len(rows)*.8)+1].snapshot.as_of),
+                "holdout_end_at": iso(rows[-1].snapshot.as_of), "approval_change": "NONE"}
+        old = registry["models"].get(key)
+        if old is not None and old != item:
+            raise StorageError("registered model version conflict")
+        registry["models"][key] = item
+    store.publish_json("model-registry", registry)
 
 
 def train_fixture(store: LocalStorage, bars: list[Bar], *, cost_bps: float = 20) -> dict:
@@ -104,10 +154,12 @@ def train_fixture(store: LocalStorage, bars: list[Bar], *, cost_bps: float = 20)
               "cost_bps": cost_bps, "approval": "RESEARCH", "split": {"train": len(train), "validation": len(validation), "holdout": len(holdout), "embargo": 1},
               "models": {}}
     for name, model in models.items():
+        walk_forward = _walk_forward(rows, model, cost_bps)
         model.fit(train_x, train_y)
         val_x, _ = _xy(validation)
         hold_x, _ = _xy(holdout)
-        report["models"][name] = {"validation": _metrics(validation, model.predict_proba(val_x)[:, 1], cost_bps=cost_bps),
+        report["models"][name] = {"walk_forward": walk_forward,
+                                  "validation": _metrics(validation, model.predict_proba(val_x)[:, 1], cost_bps=cost_bps),
                                   "holdout": _metrics(holdout, model.predict_proba(hold_x)[:, 1], cost_bps=cost_bps)}
         model_path = store.home / "models" / report["run_id"] / f"{name}.joblib"
         model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,10 +167,13 @@ def train_fixture(store: LocalStorage, bars: list[Bar], *, cost_bps: float = 20)
         import io
         buffer = io.BytesIO()
         joblib.dump(model, buffer)
+        if model_path.exists() and hashlib.sha256(model_path.read_bytes()).hexdigest() != hashlib.sha256(buffer.getvalue()).hexdigest():
+            raise StorageError("immutable model artifact conflict")
         digest = atomic_bytes(model_path, buffer.getvalue())
         report["models"][name]["artifact"] = str(model_path.relative_to(store.home))
         report["models"][name]["sha256"] = digest
     report["selection"] = "NO_AUTOMATIC_PROMOTION"
+    _record_registry(store, report, rows)
     store.publish_json(f"experiment-{report['run_id']}", report)
     store.export_csv(f"model-comparison-{report['run_id']}", [
         {"run_id": report["run_id"], "asset_id": report["asset_id"], "model": name, "split": split, **metrics}

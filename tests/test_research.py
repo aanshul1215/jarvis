@@ -25,6 +25,10 @@ def test_research_is_reproducible_and_never_promotes(tmp_path, asset, cls):
         assert first["models"]["logistic"]["holdout"] == second["models"]["logistic"]["holdout"]
         assert first["approval"] == "RESEARCH" and first["selection"] == "NO_AUTOMATIC_PROMOTION"
         assert set(first["models"]) == {"constant", "logistic"}
+        assert len(first["models"]["logistic"]["walk_forward"]) >= 2
+        assert first["models"]["logistic"]["holdout"]["calibration"]
+        registry = store.load_json("model-registry")
+        assert registry["models"][f"{first['run_id']}:logistic"]["status"] == "RESEARCH"
         backtest = backtest_fixture(store, bars)
         assert backtest["status"] == "HYPOTHETICAL"
         assert (store.home / "reports" / f"model-comparison-{first['run_id']}.csv").exists()

@@ -32,4 +32,6 @@ The private `$JARVIS_HOME/config/paper-runtime.json` must also identify exact st
 
 Local storage uses Parquet for bars/features, append-only hash-chained JSONL for operational events, JSON for experiment metadata, CSV for Excel-readable results, and native model artifacts. Only load model artifacts generated in a trusted local environment; Python model serialization can execute code when loaded. Keep `JARVIS_HOME` and backups private.
 
+`train --fixture` runs expanding chronological validation folds and an untouched holdout for a constant baseline and logistic challenger. It stores calibration bins, downside measures, model hashes, and an immutable `model-registry.json` under the local runtime. Every entry stays in `RESEARCH`; this command never approves a model or strategy.
+
 The information path accepts dated local JSON documents using the [example schema](info.example.json). `info-ingest --file PATH` persists the original text and a short, deterministic extractive summary under `JARVIS_HOME/information/`, with an `INFO_FEATURE` journal event. Documents are scoped to one asset and processed when supplied, so the trading cycle does not scrape or summarize the whole universe. Lexical sentiment is unvalidated and has no trading authority. News/SEC collectors, source licensing checks, and real event impact models remain future work.

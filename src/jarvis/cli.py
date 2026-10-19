@@ -191,6 +191,14 @@ def main(argv: list[str] | None = None) -> int:
                 bars = research_bars(asset, cls)
                 store.save_bars(bars)
                 outputs[asset] = backtest_fixture(store, bars) if args.command == "backtest" else train_fixture(store, bars)
+            if args.command == "train":
+                outputs = {asset: {"run_id": report["run_id"], "approval": report["approval"],
+                                   "selection": report["selection"],
+                                   "models": {name: {"holdout_brier": model["holdout"]["brier"],
+                                                     "holdout_compounded_net_return": model["holdout"]["compounded_net_return"],
+                                                     "walk_forward_folds": len(model["walk_forward"])}
+                                              for name, model in report["models"].items()}}
+                           for asset, report in outputs.items()}
             print(json.dumps({"mode": "SYNTHETIC_RESEARCH", "results": outputs}, indent=2))
     elif args.command == "review":
         with LocalStorage(_home(args)) as store:
