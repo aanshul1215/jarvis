@@ -1,5 +1,22 @@
 # JARVIS execution register
 
+## Phase 1 foundation fixes â€” 2026-10-19
+
+Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c82`). Plan: [Final workflow](https://github.com/aanshul1215/jarvis/blob/main/Final%20workflow(feedback%20requierd).md), Phase 1.
+
+| Fix | Status | Evidence |
+|---|---|---|
+| Windows crash writing Parquet (`fsync` on a read-only handle) | TESTED LOCALLY (Windows) | Baseline on Windows 11: 11 failed / 9 passed. After: 31 passed. |
+| Second writer on Windows raised `PermissionError` instead of `StorageError` | TESTED LOCALLY | `test_second_writer_gets_a_clear_error` |
+| Exit order ID reused across identical trades (no sell placed, fake outcome) | TESTED LOCALLY | `test_second_identical_trade_places_a_new_exit`, `test_repeated_exit_call_does_not_duplicate_the_outcome` |
+| Any open order froze every asset; no cancel path | TESTED LOCALLY | `test_expired_entry_order_is_cancelled_and_frees_the_desk`, `test_open_order_holds_only_its_own_asset` |
+| Vendor-amended bar sent the desk to SAFE | TESTED LOCALLY | `test_vendor_bar_revision_is_stored_not_safe`; revision history kept, `load_bars(as_of=...)` |
+| Daily-loss and drawdown limits never evaluated | TESTED LOCALLY (mock + fake client) | `test_daily_loss_limit_blocks_new_risk`, `test_drawdown_from_stored_peak_blocks_new_risk`, `test_alpaca_state_reports_daily_pnl_and_normalises_crypto_symbols` |
+| Crypto fee taken from the received coin broke reconciliation | TESTED WITH MOCK â€” ACCOUNT BEHAVIOUR UNVERIFIED | `test_crypto_fee_shortfall_is_recorded_but_a_real_mismatch_is_still_safe`; confirm fee posting on the first paper fill |
+| Crypto position symbol format (`BTCUSD` vs `BTC/USD`) | DEFENSIVE â€” ACCOUNT FORMAT UNVERIFIED | `test_symbol_normalisation`; confirm in the Phase 0 probe |
+| CI on Windows and Linux | ADDED â€” FIRST RUN PENDING | `.github/workflows/tests.yml` |
+| 24-hour mock paper soak (Phase 1 exit test) | NOT RUN | Next task |
+
 ## Implementation dependency map — 2026-10-18
 
 **Development branch:** `feature/jarvis-v1-implementation`, based on `origin/branch-3` at `438c778f45d679fe000720a7741b8ae743dc4bfe`. Working tree was clean at branch creation. Historical research and `legacy-v1/` remain references; no autonomous runtime existed at the baseline.

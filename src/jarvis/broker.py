@@ -14,6 +14,23 @@ class BrokerError(RuntimeError):
     pass
 
 
+def _enum_value(value: object) -> object:
+    return getattr(value, "value", value)
+
+
+def normalize_symbol(symbol: str, asset_class_value: object) -> str:
+    """The desk names crypto pairs 'BTC/USD'; Alpaca may report crypto positions as 'BTCUSD'.
+
+    Without this, a crypto position would look unknown to reconciliation and send the desk to SAFE.
+    Confirm the account's actual format in the paper probe.
+    """
+    if asset_class_value == "crypto" and "/" not in symbol:
+        for quote in ("USDT", "USDC", "USD", "BTC"):
+            if symbol.endswith(quote) and len(symbol) > len(quote):
+                return f"{symbol[:-len(quote)]}/{quote}"
+    return symbol
+
+
 class UncertainSubmission(BrokerError):
     """The broker may have accepted the order; lookup before retry."""
 
@@ -57,7 +74,7 @@ class MockBroker(BrokerAdapter):
                            positions=dict(self.positions),
                            position_values={asset: q * self.last_prices.get(asset, 0) for asset, q in self.positions.items()},
                            open_order_ids=tuple(k for k, v in self.orders.items() if v.status in ("PARTIALLY_FILLED", "ACCEPTED")),
-                           reconciled=True, daily_pnl=0.0, drawdown=0.0)
+                           reconciled=True, daily_pnl=equity - self.initial_cash, drawdown=0.0)
 
     def find_order(self, client_order_id: str) -> BrokerOrder | None:
         return self.orders.get(client_order_id)
@@ -122,11 +139,16 @@ class AlpacaPaperBroker(BrokerAdapter):
         orders = self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
         if isinstance(account, dict):
             raise BrokerError("unexpected account response")
+        last_equity = getattr(account, "last_equity", None)
+        if last_equity in (None, ""):
+            raise BrokerError("account last_equity unavailable; daily loss limit cannot be checked")
+        symbols = [normalize_symbol(p.symbol, _enum_value(getattr(p, "asset_class", None))) for p in positions]
         return BrokerState(float(account.cash), float(account.buying_power), float(account.equity),
-                           {p.symbol: float(p.qty) for p in positions},
-                           {p.symbol: float(p.market_value) for p in positions},
+                           {s: float(p.qty) for s, p in zip(symbols, positions)},
+                           {s: float(p.market_value) for s, p in zip(symbols, positions)},
                            tuple(o.client_order_id for o in orders if o.client_order_id),
-                           reconciled=True)
+                           reconciled=True,
+                           daily_pnl=float(account.equity) - float(last_equity))
 
     def find_order(self, client_order_id: str) -> BrokerOrder | None:
         from alpaca.common.exceptions import APIError
@@ -137,7 +159,8 @@ class AlpacaPaperBroker(BrokerAdapter):
             if getattr(exc, "status_code", None) == 404:
                 return None
             raise BrokerError("paper order lookup failed") from exc
-        return BrokerOrder(client_order_id, str(result.id), result.symbol, result.side.value.upper(),
+        symbol = normalize_symbol(result.symbol, _enum_value(getattr(result, "asset_class", None)))
+        return BrokerOrder(client_order_id, str(result.id), symbol, result.side.value.upper(),
                            float(result.qty or 0), float(result.filled_qty or 0),
                            float(result.filled_avg_price) if result.filled_avg_price else None,
                            result.status.value.upper(), result.submitted_at or utc_now())

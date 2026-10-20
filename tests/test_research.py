@@ -61,8 +61,11 @@ def test_bar_reingestion_preserves_first_availability(tmp_path):
         store.save_bars(repeated)
         assert store.load_bars("AAPL", AssetClass.EQUITY) == bars
         changed = replace(repeated[0], close=repeated[0].close * 1.001, high=repeated[0].high * 1.01)
-        with pytest.raises(StorageError, match="revision"):
-            store.save_bars([changed])
+        store.save_bars([changed])  # a vendor amendment becomes revision 2; it no longer halts the desk
+        assert len(store.load_bars("AAPL", AssetClass.EQUITY, all_revisions=True)) == 3
+        latest = store.load_bars("AAPL", AssetClass.EQUITY)
+        assert latest[0].revision == 2 and latest[0].close == changed.close
+        assert store.load_bars("AAPL", AssetClass.EQUITY, as_of=bars[0].available_at) == [bars[0]]
 
 
 def test_owner_policy_is_default_deny(tmp_path):

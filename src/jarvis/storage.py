@@ -9,6 +9,7 @@ import os
 import re
 import tempfile
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -57,6 +58,16 @@ def atomic_bytes(path: Path, content: bytes) -> str:
             os.unlink(tmp)
 
 
+def _ohlcv(bar: Bar) -> tuple[float, float, float, float, float]:
+    return bar.open, bar.high, bar.low, bar.close, bar.volume
+
+
+def _fsync_path(path: str) -> None:
+    # Windows rejects fsync on a read-only handle (EBADF), so open read-write.
+    with open(path, "r+b") as stream:
+        os.fsync(stream.fileno())
+
+
 def _safe_name(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", value)
     if not safe or safe.startswith("."):
@@ -75,7 +86,8 @@ class StorageAdapter(ABC):
     def save_bars(self, bars: Iterable[Bar]) -> Path: ...
 
     @abstractmethod
-    def load_bars(self, asset_id: str, asset_class: AssetClass) -> list[Bar]: ...
+    def load_bars(self, asset_id: str, asset_class: AssetClass, *, as_of: datetime | None = None,
+                  all_revisions: bool = False) -> list[Bar]: ...
 
     @abstractmethod
     def save_features(self, snapshots: Iterable[FeatureSnapshot]) -> Path: ...
@@ -116,25 +128,22 @@ class LocalStorage(StorageAdapter):
     def _acquire_lock(self) -> None:
         lock_path = self.home / "journal" / "writer.lock"
         self._lock_file = open(lock_path, "a+b")
-        if os.name == "nt":
-            import msvcrt
+        try:
+            if os.name == "nt":
+                import msvcrt
 
-            self._lock_file.seek(0)
-            if self._lock_file.read(1) == b"":
-                self._lock_file.write(b"0")
-                self._lock_file.flush()
-            self._lock_file.seek(0)
-            try:
+                # Lock before any read: reading a byte another process has locked raises
+                # PermissionError on Windows. Locking past the end of the file is permitted.
+                self._lock_file.seek(0)
                 msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-            except OSError as exc:
-                raise StorageError("another journal writer is active") from exc
-        else:
-            import fcntl
+            else:
+                import fcntl
 
-            try:
                 fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as exc:
-                raise StorageError("another journal writer is active") from exc
+        except OSError as exc:
+            self._lock_file.close()
+            self._lock_file = None
+            raise StorageError("another journal writer is active") from exc
 
     def close(self) -> None:
         if self._lock_file is not None:
@@ -224,7 +233,21 @@ class LocalStorage(StorageAdapter):
     def load_json(self, name: str) -> dict[str, Any]:
         return json.loads((self.home / "config" / f"{_safe_name(name)}.json").read_text())
 
+    @staticmethod
+    def _bar_row(bar: Bar) -> dict[str, Any]:
+        row = vars(bar).copy()
+        row["asset_class"] = bar.asset_class.value
+        for key in ("start_at", "end_at", "available_at"):
+            row[key] = iso(row[key])
+        return row
+
     def save_bars(self, bars: Iterable[Bar]) -> Path:
+        """Merge bars into the asset partition.
+
+        An identical re-delivery keeps the first observed availability time. A vendor amendment of an
+        already-stored bar (for example late prints changing volume) is kept as a new revision with its own,
+        later availability time, so earlier decisions stay reproducible and the desk does not halt.
+        """
         self._require_writer()
         values = sorted(list(bars), key=lambda b: b.end_at)
         if not values:
@@ -232,39 +255,32 @@ class LocalStorage(StorageAdapter):
         first = values[0]
         if any(b.asset_id != first.asset_id or b.asset_class != first.asset_class for b in values):
             raise ValueError("partition may contain one asset only")
-        rows = []
-        for bar in values:
-            row = vars(bar).copy()
-            row["asset_class"] = bar.asset_class.value
-            for key in ("start_at", "end_at", "available_at"):
-                row[key] = iso(row[key])
-            rows.append(row)
         path = self.home / "market" / first.asset_class.value.lower() / _safe_name(first.asset_id) / "bars.parquet"
         path.parent.mkdir(parents=True, exist_ok=True)
-        existing = self.load_bars(first.asset_id, first.asset_class) if path.exists() else []
-        if existing:
-            keys = {(b.end_at, b.source_id, b.revision): b for b in existing}
-            for bar in values:
-                key = (bar.end_at, bar.source_id, bar.revision)
-                previous = keys.get(key)
-                if previous is not None:
-                    if (previous.open, previous.high, previous.low, previous.close, previous.volume) != (bar.open, bar.high, bar.low, bar.close, bar.volume):
-                        raise StorageError("conflicting bar revision; explicit revision required")
-                    continue  # preserve the first observed availability timestamp
-                keys[key] = bar
-            rows = []
-            for bar in sorted(keys.values(), key=lambda b: (b.end_at, b.revision)):
-                row = vars(bar).copy()
-                row["asset_class"] = bar.asset_class.value
-                for key in ("start_at", "end_at", "available_at"):
-                    row[key] = iso(row[key])
-                rows.append(row)
+        existing = self.load_bars(first.asset_id, first.asset_class, all_revisions=True) if path.exists() else []
+        stored = {(b.end_at, b.source_id, b.revision): b for b in existing}
+        latest: dict[tuple[datetime, str], Bar] = {}
+        for bar in existing:
+            key = (bar.end_at, bar.source_id)
+            if key not in latest or bar.revision > latest[key].revision:
+                latest[key] = bar
+        for bar in values:
+            key = (bar.end_at, bar.source_id)
+            previous = latest.get(key)
+            if previous is None:
+                stored[(bar.end_at, bar.source_id, bar.revision)] = bar
+                latest[key] = bar
+            elif _ohlcv(previous) != _ohlcv(bar):
+                revised = replace(bar, revision=previous.revision + 1,
+                                  available_at=max(bar.available_at, previous.available_at))
+                stored[(revised.end_at, revised.source_id, revised.revision)] = revised
+                latest[key] = revised
+        rows = [self._bar_row(b) for b in sorted(stored.values(), key=lambda b: (b.end_at, b.revision))]
         fd, tmp = tempfile.mkstemp(prefix=".bars.", suffix=".parquet", dir=path.parent)
         os.close(fd)
         try:
             pq.write_table(pa.Table.from_pylist(rows), tmp, compression="zstd")
-            with open(tmp, "rb") as stream:
-                os.fsync(stream.fileno())
+            _fsync_path(tmp)
             os.replace(tmp, path)
             _sync_dir(path.parent)
             digest = _hash(path.read_bytes())
@@ -274,7 +290,9 @@ class LocalStorage(StorageAdapter):
                 os.unlink(tmp)
         return path
 
-    def load_bars(self, asset_id: str, asset_class: AssetClass) -> list[Bar]:
+    def load_bars(self, asset_id: str, asset_class: AssetClass, *, as_of: datetime | None = None,
+                  all_revisions: bool = False) -> list[Bar]:
+        """Latest revision of each bar (as known at ``as_of`` when given), or every stored revision."""
         path = self.home / "market" / asset_class.value.lower() / _safe_name(asset_id) / "bars.parquet"
         if not path.exists():
             return []
@@ -287,7 +305,16 @@ class LocalStorage(StorageAdapter):
             for key in ("start_at", "end_at", "available_at"):
                 row[key] = parse_utc(row[key])
             bars.append(Bar(**row))
-        return bars
+        if all_revisions:
+            return bars
+        chosen: dict[tuple[datetime, str], Bar] = {}
+        for bar in bars:
+            if as_of is not None and bar.available_at > as_of:
+                continue
+            key = (bar.end_at, bar.source_id)
+            if key not in chosen or bar.revision > chosen[key].revision:
+                chosen[key] = bar
+        return sorted(chosen.values(), key=lambda b: b.end_at)
 
     def export_csv(self, name: str, rows: list[dict[str, Any]]) -> Path:
         self._require_writer()
@@ -338,8 +365,7 @@ class LocalStorage(StorageAdapter):
         os.close(fd)
         try:
             pq.write_table(pa.Table.from_pylist(rows), tmp, compression="zstd")
-            with open(tmp, "rb") as stream:
-                os.fsync(stream.fileno())
+            _fsync_path(tmp)
             os.replace(tmp, path)
             _sync_dir(path.parent)
             atomic_bytes(path.with_suffix(".manifest.json"), _canonical({"schema_version": 1,

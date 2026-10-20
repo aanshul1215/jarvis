@@ -7,13 +7,17 @@ from datetime import datetime, timedelta
 
 from .broker import BrokerAdapter, BrokerError
 from .config import PaperRuntime
-from .contracts import AssetClass, LedgerEvent, Mode, new_id, utc_now
+from .contracts import AssetClass, LedgerEvent, Mode, iso, new_id, parse_utc, utc_now
 from .engine import TradingEngine
 from .market_data import AlpacaMarketData
 from .review import review_outcomes
 from .risk import Governor, RiskPolicy
 from .storage import LocalStorage
 from .strategies import StrategyRegistry, baseline_specs
+
+
+# Fallback lifetime for an entry order whose intent predates the recorded expiry field.
+ENTRY_ORDER_MAX_AGE = timedelta(minutes=30)
 
 
 class PaperDesk:
@@ -39,10 +43,44 @@ class PaperDesk:
                                             asset_id=asset, status=status, reason_codes=reasons,
                                             payload=payload or {}))
 
+    def _resolve_open_orders(self, clock: datetime) -> set[str]:
+        """Cancel entry orders that outlived their candidate; return the assets that still have a working order.
+
+        Only an asset with a working order waits. Previously any open order held every asset, including exits of
+        other positions, and nothing ever cancelled it.
+        """
+        open_ids = self.broker.state().open_order_ids
+        if not open_ids:
+            return set()
+        intents = {row["event"]["payload"].get("client_order_id"): row["event"] for row in self.store.read_events()
+                   if row["event"]["event_type"] in ("ORDER_INTENT", "EXIT_INTENT")}
+        held: set[str] = set()
+        for client_id in open_ids:
+            intent = intents.get(client_id)
+            if intent is None:
+                raise BrokerError("open broker order without a recorded intent")
+            asset = intent.get("asset_id")
+            held.add(asset)  # wait for the broker to confirm the cancel or fill at the next reconcile
+            if intent["event_type"] != "ORDER_INTENT":
+                continue  # exit orders are never cancelled here
+            expires = intent["payload"].get("expires_at")
+            deadline = parse_utc(expires) if expires else parse_utc(intent["at"]) + ENTRY_ORDER_MAX_AGE
+            if clock > deadline:
+                self.broker.cancel(client_id)
+                self._event("ORDER_CANCEL", asset, "CANCEL_REQUESTED", ("ENTRY_ORDER_EXPIRED",),
+                            {"client_order_id": client_id, "deadline": iso(deadline)})
+        return held
+
     def run_once(self, *, now: datetime | None = None) -> dict:
         self.engine.reconcile()
         clock = now or utc_now()
         outcomes = {}
+        try:
+            held = self._resolve_open_orders(clock)
+        except Exception as exc:
+            self.engine.mode = Mode.SAFE
+            self._event("CYCLE_ERROR", "PORTFOLIO", "SAFE", (type(exc).__name__,))
+            return {"mode": self.engine.mode.value, "assets": outcomes}
         for asset in self.runtime.assets:
             symbol, cls = asset.symbol, asset.asset_class
             if not self.broker.asset_eligible(symbol, cls):
@@ -79,10 +117,8 @@ class PaperDesk:
                                      "observed_at": quote.observed_at.isoformat(),
                                      "access_latency_ms": quote.latency_ms,
                                      "attribution": "API_REQUEST_DURATION_ONLY"})
-                current_state = self.broker.state()
-                if current_state.open_order_ids:
-                    self._event("ORDER_MONITOR", symbol, "BLOCK", ("OPEN_ORDERS_REQUIRE_RECONCILIATION",),
-                                {"open_order_count": len(current_state.open_order_ids)})
+                if symbol in held:
+                    self._event("ORDER_MONITOR", symbol, "BLOCK", ("OPEN_ORDER_FOR_ASSET",))
                     outcomes[symbol] = "OPEN_ORDER_HOLD"
                     continue
                 monitor = self.engine.monitor_positions(bars)

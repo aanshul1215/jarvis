@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from typing import Any
 
 from .broker import BrokerAdapter, BrokerError, UncertainSubmission
-from .contracts import Bar, Candidate, LedgerEvent, Mode, StrategyIntent, iso, new_id, utc_now
+from .contracts import AssetClass, Bar, Candidate, LedgerEvent, Mode, StrategyIntent, iso, new_id, utc_now
 from .market import features_for, scan, stable_id, validate_feed
-from .risk import Governor
+from .risk import BrokerState, Governor
 from .storage import LocalStorage, StorageError
 from .strategies import StrategyRegistry, select_intent
+
+
+# Alpaca takes the crypto trading fee from the asset received, so after a crypto buy the broker position is
+# slightly smaller than the filled quantity (research briefs 18 and 21; confirm on the first paper fill).
+# Shortfalls up to this fraction of the quantity bought are recorded as fee adjustments instead of SAFE.
+CRYPTO_FEE_TOLERANCE = 0.004
+EQUITY_HIGH_WATER = "equity-high-water"
 
 
 class TradingEngine:
@@ -66,18 +73,51 @@ class TradingEngine:
                 if client_id:
                     latest[client_id] = event
         expected: dict[str, float] = {}
+        bought: dict[str, float] = {}
         for event in latest.values():
             asset = event.get("asset_id")
             side = event["payload"].get("side", "BUY")
+            filled = float(event["payload"].get("filled_quantity", 0))
             if asset:
-                expected[asset] = expected.get(asset, 0) + (1 if side == "BUY" else -1) * float(event["payload"].get("filled_quantity", 0))
-        if any(abs(expected.get(asset, 0) - state.positions.get(asset, 0)) > 1e-7
-               for asset in set(expected) | set(state.positions)):
+                expected[asset] = expected.get(asset, 0) + (filled if side == "BUY" else -filled)
+                if side == "BUY":
+                    bought[asset] = bought.get(asset, 0) + filled
+        crypto_assets: set[str] = set()
+        for item in all_events:
+            event = item["event"]
+            if event["event_type"] == "POSITION_ADJUSTMENT" and event.get("asset_id"):
+                expected[event["asset_id"]] = expected.get(event["asset_id"], 0) + float(event["payload"]["delta"])
+            elif event["event_type"] == "ORDER_INTENT" and event["payload"].get("asset_class") == AssetClass.CRYPTO.value:
+                crypto_assets.add(event.get("asset_id"))
+        for asset in sorted(set(expected) | set(state.positions)):
+            difference = state.positions.get(asset, 0) - expected.get(asset, 0)
+            if abs(difference) <= 1e-7:
+                continue
+            is_crypto = asset in crypto_assets or "/" in asset
+            if is_crypto and difference < 0 and -difference <= bought.get(asset, 0) * CRYPTO_FEE_TOLERANCE + 1e-9:
+                self._record("POSITION_ADJUSTMENT", new_id("fee"), asset_id=asset,
+                             payload={"delta": difference, "reason": "CRYPTO_FEE_IN_RECEIVED_ASSET",
+                                      "evidence": "UNVERIFIED_UNTIL_PAPER_PROBE"},
+                             reason_codes=("CRYPTO_FEE_ADJUSTMENT",))
+                continue
             self.mode = Mode.SAFE
             raise BrokerError("unknown or mismatched broker position; SAFE")
         self._record("RECONCILED", new_id("reconcile"), payload={"open_orders": len(state.open_order_ids),
                                                                   "positions": state.positions})
         self._ready = True
+
+    def _risk_state(self) -> BrokerState:
+        """Broker state plus drawdown from the stored equity high-water mark (a fraction of peak equity)."""
+        state = self.broker.state()
+        try:
+            peak = float(self.store.load_json(EQUITY_HIGH_WATER)["equity"])
+        except FileNotFoundError:
+            peak = 0.0
+        if state.equity > peak:
+            self.store.publish_json(EQUITY_HIGH_WATER, {"equity": state.equity, "at": iso(utc_now())})
+            peak = state.equity
+        drawdown = 1 - state.equity / peak if peak > 0 else 0.0
+        return replace(state, drawdown=max(state.drawdown, drawdown))
 
     def _record(self, kind: str, correlation_id: str, *, asset_id: str | None = None,
                 payload: dict[str, Any] | None = None, reason_codes: tuple[str, ...] = ()) -> str:
@@ -119,7 +159,7 @@ class TradingEngine:
             client_id = stable_id("jarvis", intent.intent_id)
             existing = {e["event"]["payload"].get("client_order_id") for e in self.store.read_events()
                         if e["event"]["event_type"] == "ORDER_INTENT"}
-            risk = self.governor.assess(intent, self.broker.state(), self.mode, now, quote_at or bars[-1].available_at,
+            risk = self.governor.assess(intent, self._risk_state(), self.mode, now, quote_at or bars[-1].available_at,
                                          spread_bps, client_id, existing, mock=self.broker.__class__.__name__ == "MockBroker")
             self._record("RISK_DECISION", candidate.candidate_id, asset_id=candidate.asset_id,
                          payload={"intent_id": intent.intent_id, "result": risk.result,
@@ -130,6 +170,8 @@ class TradingEngine:
             # A durable intent always precedes the external call.
             self._record("ORDER_INTENT", candidate.candidate_id, asset_id=candidate.asset_id,
                          payload={"intent_id": intent.intent_id, "client_order_id": client_id,
+                                  "asset_class": intent.asset_class.value,
+                                  "expires_at": iso(intent.expires_at),
                                   "quantity": risk.allowed_quantity, "side": intent.side,
                                   "strategy_id": intent.strategy_id, "strategy_version": intent.strategy_version,
                                   "model_id": intent.model_id, "model_version": intent.model_version,
@@ -167,7 +209,11 @@ class TradingEngine:
         qty = state.positions.get(asset_id, 0)
         if qty <= 0:
             return "FLAT"
-        client_id = stable_id("exit", asset_id, reason, str(qty))
+        # The exit ID is tied to the entry it closes. An ID built from asset, reason and quantity alone repeats on
+        # the next identical trade, so the old filled exit was found and no new sell was ever placed.
+        entries = [item["event"]["payload"].get("client_order_id") for item in self.store.read_events()
+                   if item["event"]["event_type"] == "ORDER_INTENT" and item["event"].get("asset_id") == asset_id]
+        client_id = stable_id("exit", asset_id, entries[-1] if entries else "no-entry", reason, str(qty))
         self._record("EXIT_INTENT", client_id, asset_id=asset_id,
                      payload={"client_order_id": client_id, "quantity": qty, "reason": reason})
         order = self.broker.find_order(client_id)
@@ -185,7 +231,10 @@ class TradingEngine:
                      payload={"client_order_id": client_id, "broker_order_id": order.broker_order_id,
                               "side": "SELL",
                               "status": order.status, "filled_quantity": order.filled_quantity})
-        if order.status == "FILLED" and order.average_price is not None:
+        already_recorded = any(item["event"]["event_type"] == "TRADE_OUTCOME"
+                               and item["event"]["correlation_id"] == client_id
+                               for item in self.store.read_events())
+        if order.status == "FILLED" and order.average_price is not None and not already_recorded:
             by_client = {}
             for item in self.store.read_events():
                 event = item["event"]
