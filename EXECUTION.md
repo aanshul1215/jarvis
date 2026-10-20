@@ -47,6 +47,17 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Performance | MEASURED | 6-month replay 20.2 s â†’ 0.7 s after removing a per-cycle journal re-read; full evaluation of 2.3 years Ã— 4 stocks (base, doubled costs, benchmarks, 8 poisoning cut-offs) â‰ˆ 20â€“35 s |
 | Real-data evaluation | BLOCKED â€” NEEDS ALPACA PAPER KEYS | `jarvis backtest --universe ... --strategy ...` runs once `backfill` has data |
 
+## Phase 4 strategy library â€” 2026-10-19
+
+| Item | Status | Evidence |
+|---|---|---|
+| Long-horizon features (returns to 252 bars, 12-1 momentum, 50/200-bar averages, RSI(2)/RSI(14), Bollinger z, ATR, volatility ratio, 20-bar breakdown, distance from 1-year high) | TESTED | Hand-checked on a known series (ret_252, mom_12_1, sma_200, RSI, ATR) |
+| Strategy interface: entry score with cross-asset context; strategy-owned exits; ATR stop-loss; maximum holding period; one position per asset | TESTED | `test_engine_applies_the_owning_strategys_stop_loss_and_signal_exit` |
+| Paper loop in two passes (gather, then decide on one consistent point-in-time view of all assets) | TESTED | full suite |
+| Point-in-time earnings calendar for event strategies (harness and paper command) | TESTED | `test_earnings_calendar_is_point_in_time` |
+| Five strategies pre-registered before any real-data run: trend-sma200, meanrev-rsi2, volatility-breakout, relative-strength, earnings-drift (plus the breakout baseline and random control) | REGISTERED â€” NOT YET EVALUATED ON REAL DATA | `docs/06-strategies/STRATEGY_REGISTER.md`; unit tests per rule; every strategy trades in a synthetic replay and passes the future-poisoning test |
+| Phase 4 exit test (each strategy has an out-of-sample daily return series) | BLOCKED â€” NEEDS ALPACA PAPER KEYS | The development runs (2016-03-01 to 2023-12-31) are pre-registered; results will be appended to the register |
+
 ## Implementation dependency map — 2026-10-18
 
 **Development branch:** `feature/jarvis-v1-implementation`, based on `origin/branch-3` at `438c778f45d679fe000720a7741b8ae743dc4bfe`. Working tree was clean at branch creation. Historical research and `legacy-v1/` remain references; no autonomous runtime existed at the baseline.

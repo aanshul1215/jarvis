@@ -41,8 +41,10 @@ SETTINGS = {
     ("1Hour", AssetClass.EQUITY): RunnerSettings(timedelta(days=30), timedelta(hours=2), timedelta(hours=1)),
     ("1Hour", AssetClass.CRYPTO): RunnerSettings(timedelta(hours=72), timedelta(hours=2), timedelta(hours=1)),
     # Daily stock bars: a Friday close must still count on Tuesday after a Monday holiday.
-    ("1Day", AssetClass.EQUITY): RunnerSettings(timedelta(days=60), timedelta(days=4), timedelta(days=4)),
-    ("1Day", AssetClass.CRYPTO): RunnerSettings(timedelta(days=40), timedelta(days=2), timedelta(days=2)),
+    # Daily bars: about 400 calendar days (~275 sessions) so year-long features such as the 200-day average and
+    # 12-1 momentum are available.
+    ("1Day", AssetClass.EQUITY): RunnerSettings(timedelta(days=400), timedelta(days=4), timedelta(days=4)),
+    ("1Day", AssetClass.CRYPTO): RunnerSettings(timedelta(days=300), timedelta(days=2), timedelta(days=2)),
 }
 
 

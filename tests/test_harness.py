@@ -38,7 +38,7 @@ class CandleContinuation(Strategy):
     cheaply on up days and miss down days: a leak in the execution inputs rather than the signal, the same class of
     mistake as v1's next-day-return feature. It earns a Sharpe near 2, below the statistical alarm."""
 
-    def entry_score(self, snapshot):
+    def entry_score(self, snapshot, context=None):
         bullish, body = snapshot.values.get("candle_bullish"), snapshot.values.get("candle_body_ratio")
         return 1.0 if bullish == 1.0 and body is not None and body > 0.6 else None
 

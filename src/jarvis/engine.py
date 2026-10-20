@@ -8,11 +8,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .broker import BrokerAdapter, BrokerError, UncertainSubmission
-from .contracts import AssetClass, Bar, Candidate, LedgerEvent, Mode, StrategyIntent, iso, new_id, utc_now
+from .contracts import (AssetClass, Bar, Candidate, FeatureSnapshot, LedgerEvent, Mode, StrategyIntent, iso, new_id,
+                        parse_utc, utc_now)
 from .market import features_for, scan, stable_id, validate_feed
 from .risk import BrokerState, Governor
 from .storage import LocalStorage, StorageError
-from .strategies import StrategyRegistry, select_intent
+from .strategies import DecisionContext, OpenPosition, StrategyRegistry, select_intent
 
 
 # Alpaca takes the crypto trading fee from the asset received, so after a crypto buy the broker position is
@@ -125,7 +126,8 @@ class TradingEngine:
                 reference_price: float | None = None, spread_bps: float = 5,
                 quantity: float = 1, quote_at: datetime | None = None,
                 feature_horizon: timedelta = timedelta(hours=1),
-                persist_features: bool = True) -> list[dict[str, Any]]:
+                persist_features: bool = True, context: DecisionContext | None = None,
+                snapshot: FeatureSnapshot | None = None) -> list[dict[str, Any]]:
         if not self._ready:
             raise BrokerError("reconcile before processing")
         now = as_of or utc_now()
@@ -136,7 +138,8 @@ class TradingEngine:
         if not valid:
             self._record("DATA_QUARANTINE", new_id("feed"), reason_codes=reasons)
             return []
-        snapshot = features_for(bars, now, horizon=feature_horizon)
+        if snapshot is None or snapshot.asset_id != bars[-1].asset_id:
+            snapshot = features_for(bars, now, horizon=feature_horizon)
         if persist_features:
             self.store.save_features([snapshot])
         self._record("FEATURE_SNAPSHOT", snapshot.snapshot_id, asset_id=snapshot.asset_id,
@@ -144,7 +147,7 @@ class TradingEngine:
                               "available_at": iso(snapshot.available_at)})
         # Strategy detectors decide what is tradable; the generic scanner adds other anomalies for observation only.
         merged = {c.trigger: c for c in scan(snapshot, now)}
-        merged.update({c.trigger: c for c in self.registry.candidates(snapshot, now, self.mode)})
+        merged.update({c.trigger: c for c in self.registry.candidates(snapshot, now, self.mode, context)})
         results = []
         for candidate in sorted(merged.values(), key=lambda c: c.score, reverse=True):
             self._record("CANDIDATE", candidate.candidate_id, asset_id=candidate.asset_id,
@@ -268,8 +271,13 @@ class TradingEngine:
                                       "evidence_class": getattr(self.broker, "evidence_class", "PAPER")})
         return order.status
 
-    def monitor_positions(self, bars: list[Bar]) -> list[dict[str, Any]]:
-        """Apply the strategy's recorded time exit to reconciled open positions."""
+    def monitor_positions(self, bars: list[Bar], context: DecisionContext | None = None,
+                          snapshot: FeatureSnapshot | None = None) -> list[dict[str, Any]]:
+        """Manage an open position with the exit rules of the strategy that opened it.
+
+        Order of checks: maximum holding time, then (from the first new bar after entry) the strategy's stop-loss
+        in ATRs below the entry price, then the strategy's own exit signal. Exits are market sells.
+        """
         if not self._ready:
             raise BrokerError("reconcile before monitoring")
         if not bars:
@@ -283,11 +291,23 @@ class TradingEngine:
             limit = payload.get("exit_after_bars")
             if entry_end is None or limit is None:
                 continue
-            from .contracts import parse_utc
             elapsed = sum(b.end_at > parse_utc(entry_end) for b in bars)
-            if elapsed >= limit:
-                status = self.exit_position(asset, bars[-1].asset_class, bars[-1].close, reason="TIME_EXIT")
-                return [{"asset_id": asset, "exit_reason": "TIME_EXIT", "status": status}]
+            reason = "TIME_EXIT" if elapsed >= limit else None
+            strategy = self.registry.implementation(payload.get("strategy_id"), payload.get("strategy_version"))
+            if reason is None and strategy is not None and elapsed >= 1:
+                if snapshot is None or snapshot.asset_id != asset:
+                    snapshot = features_for(bars, max(b.available_at for b in bars))
+                fill = self.store.index.latest_order.get(payload["client_order_id"], {}).get("payload", {})
+                entry_price = fill.get("average_price")
+                atr, close = snapshot.values.get("atr_14"), snapshot.values.get("close")
+                if strategy.stop_loss_atr and entry_price and atr and close is not None \
+                        and close <= entry_price - strategy.stop_loss_atr * atr:
+                    reason = "STOP_LOSS"
+                else:
+                    reason = strategy.exit_reason(snapshot, OpenPosition(asset, entry_price, elapsed), context)
+            if reason:
+                status = self.exit_position(asset, bars[-1].asset_class, bars[-1].close, reason=reason)
+                return [{"asset_id": asset, "exit_reason": reason, "status": status}]
             return [{"asset_id": asset, "exit_reason": "HOLD", "bars_remaining": limit - elapsed}]
         self.mode = Mode.SAFE
         self._record("POSITION_UNKNOWN", new_id("position"), asset_id=asset,

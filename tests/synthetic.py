@@ -44,7 +44,8 @@ class RandomWalkHistory:
 SYMBOLS = ("AAA", "BBB", "CCC", "DDD")
 
 
-def build_market(store, *, seed=1, start=datetime(2016, 1, 1, tzinfo=UTC), end=datetime(2018, 7, 1, tzinfo=UTC)):
+def build_market(store, *, seed=1, start=datetime(2016, 1, 1, tzinfo=UTC), end=datetime(2018, 7, 1, tzinfo=UTC),
+                 symbols=SYMBOLS):
     client = RandomWalkHistory(seed)
-    return backfill(store, client, client, [UniverseAsset(s, AssetClass.EQUITY) for s in SYMBOLS],
+    return backfill(store, client, client, [UniverseAsset(s, AssetClass.EQUITY) for s in symbols],
                     start=start, end=end, timeframes=("1Day",))

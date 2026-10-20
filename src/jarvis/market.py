@@ -14,6 +14,54 @@ def stable_id(prefix: str, *parts: str) -> str:
     return prefix + "_" + hashlib.sha256("|".join(parts).encode()).hexdigest()[:24]
 
 
+def _rsi(closes: list[float], period: int) -> float | None:
+    """Relative strength index with simple averages over ``period`` changes (Cutler's variant): 0-100."""
+    if len(closes) <= period:
+        return None
+    changes = [closes[i] - closes[i - 1] for i in range(len(closes) - period, len(closes))]
+    gains = sum(c for c in changes if c > 0) / period
+    losses = -sum(c for c in changes if c < 0) / period
+    if gains == losses == 0:
+        return 50.0
+    return 100.0 if losses == 0 else 100 - 100 / (1 + gains / losses)
+
+
+def _long_horizon(known: list[Bar], closes: list[float], returns: list[float]) -> dict[str, float | None]:
+    """Features over up to a year of bars ("bars", so on hourly data a 252 window is 252 hours)."""
+    n, close = len(closes), closes[-1]
+
+    def ret(k: int) -> float | None:
+        return close / closes[-1 - k] - 1 if n > k else None
+
+    sma50 = mean(closes[-50:]) if n >= 50 else None
+    sma200 = mean(closes[-200:]) if n >= 200 else None
+    window20 = closes[-20:]
+    std20 = pstdev(window20) if n >= 20 else None
+    true_ranges = [max(b.high, p.close) - min(b.low, p.close) for p, b in zip(known[-15:-1], known[-14:])]
+    atr14 = mean(true_ranges) if len(true_ranges) == 14 else None
+    vol20 = pstdev(returns[-20:]) if len(returns) >= 20 else None
+    vol252 = pstdev(returns[-252:]) if len(returns) >= 252 else None
+    prior_low = min((b.low for b in known[-21:-1]), default=None)
+    high252 = max(b.high for b in known[-252:]) if n >= 252 else None
+    return {
+        "close": close,
+        "ret_5": ret(5), "ret_20": ret(20), "ret_60": ret(60), "ret_126": ret(126), "ret_252": ret(252),
+        # 12-month momentum skipping the most recent month (the standard "12-1" definition).
+        "mom_12_1": closes[-22] / closes[-253] - 1 if n > 252 else None,
+        "sma_50": sma50, "sma_200": sma200,
+        "dist_sma_50": close / sma50 - 1 if sma50 else None,
+        "dist_sma_200": close / sma200 - 1 if sma200 else None,
+        "rsi_2": _rsi(closes, 2), "rsi_14": _rsi(closes, 14),
+        "bollinger_z_20": (close - mean(window20)) / std20 if std20 else None,
+        "atr_14": atr14, "atr_14_pct": atr14 / close if atr14 else None,
+        "volatility_252": vol252,
+        "volatility_ratio_20_252": vol20 / vol252 if vol20 is not None and vol252 else None,
+        "low_20_prior": prior_low,
+        "breakdown_20": close / prior_low - 1 if prior_low else None,
+        "dist_high_252": close / high252 - 1 if high252 else None,
+    }
+
+
 def features_for(bars: list[Bar], as_of: datetime, *, horizon: timedelta = timedelta(hours=1)) -> FeatureSnapshot:
     require_utc(as_of)
     known = [b for b in bars if b.available_at <= as_of]
@@ -43,6 +91,7 @@ def features_for(bars: list[Bar], as_of: datetime, *, horizon: timedelta = timed
         "candle_bullish": 1.0 if body > 0 else 0.0,
         "trend_strength": (mean(closes[-5:]) / mean(closes[-20:]) - 1) if len(closes) >= 20 else None,
     }
+    values.update(_long_horizon(known, closes, returns))
     if cls == AssetClass.CRYPTO:
         values["session_gap_applicable"] = 0.0
         values["gap"] = None  # crypto has no regular session open

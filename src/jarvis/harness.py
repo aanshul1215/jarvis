@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import PaperAsset, PaperRuntime
+from .edgar import EarningsCalendar
 from .contracts import AssetClass, iso, utc_now
 from .macro import load_macro
 from .metrics import block_bootstrap_pvalue, daily_returns, daily_series, summarize, trade_stats
@@ -40,7 +41,7 @@ from .replay import CostModel, LookAheadError, ReplayBroker, ReplayClock, Replay
 from .risk import RiskPolicy
 from .runner import PaperDesk
 from .storage import LocalStorage, _canonical, _hash
-from .strategies import baseline_specs, research_specs
+from .strategies import all_specs
 
 ALPHA = 0.05
 LEAK_SHARPE, LEAK_WIN_RATE, MIN_TRADES, MIN_YEAR_SHARE = 3.0, 0.75, 30, 0.6
@@ -88,8 +89,9 @@ def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=Repla
     with tempfile.TemporaryDirectory(prefix="jarvis-replay-") as work:
         with LocalStorage(Path(work) / "journal", durable=False, cache_events=False) as journal:
             desk = PaperDesk(journal, broker, data, _policy(spec), runtime, clock=clock,
-                             specs=specs if specs is not None else baseline_specs() + research_specs(),
-                             seed=spec.seed, persist_market_data=False)
+                             specs=specs if specs is not None else all_specs(),
+                             seed=spec.seed, persist_market_data=False,
+                             earnings=EarningsCalendar(data_store, [s for s, c in spec.assets if c == AssetClass.EQUITY]))
             for moment in data.schedule(spec.start, spec.end):
                 clock.now = moment
                 broker.step()

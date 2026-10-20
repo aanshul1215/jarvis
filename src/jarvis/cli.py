@@ -173,7 +173,9 @@ def main(argv: list[str] | None = None) -> int:
                 with LocalStorage(home) as store:
                     broker = AlpacaPaperBroker(key, secret, enable_orders=True)
                     data = AlpacaMarketData(key, secret)
-                    desk = PaperDesk(store, broker, data, policy, runtime)
+                    from .edgar import EarningsCalendar
+                    earnings = EarningsCalendar(store, [a.symbol for a in runtime.assets if a.asset_class == AssetClass.EQUITY])
+                    desk = PaperDesk(store, broker, data, policy, runtime, earnings=earnings)
                     while True:
                         result = desk.run_once()
                         print(json.dumps(result, indent=2))

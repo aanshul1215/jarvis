@@ -15,7 +15,8 @@ from .review import review_outcomes
 from .risk import Governor, RiskPolicy
 from .storage import LocalStorage
 from .contracts import StrategySpec
-from .strategies import StrategyRegistry, baseline_specs
+from .market import features_for
+from .strategies import DecisionContext, StrategyRegistry, baseline_specs
 from .timeframes import settings as timeframe_settings
 
 
@@ -26,7 +27,8 @@ ENTRY_ORDER_MAX_AGE = timedelta(minutes=30)
 class PaperDesk:
     def __init__(self, store: LocalStorage, broker: BrokerAdapter, data: AlpacaMarketData,
                  policy: RiskPolicy, runtime: PaperRuntime, *, clock: Callable[[], datetime] = utc_now,
-                 specs: list[StrategySpec] | None = None, seed: int = 0, persist_market_data: bool = True):
+                 specs: list[StrategySpec] | None = None, seed: int = 0, persist_market_data: bool = True,
+                 earnings: Callable[[str, datetime], list[dict]] | None = None):
         """``specs`` and ``persist_market_data=False`` exist for the evaluation harness; the paper CLI uses the
         defaults (baseline strategies only, bars saved every cycle)."""
         if not policy.owner_approved or not policy.paper_enabled:
@@ -44,6 +46,7 @@ class PaperDesk:
         self.policy, self.runtime = policy, runtime
         self.clock = clock  # injectable so replays and soak tests can run on simulated time
         self.persist_market_data = persist_market_data
+        self.earnings = earnings  # earnings releases known at a time, for event strategies
         self._reviewed_outcomes = -1  # outcome count at the last review report
         self.engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry(approved, seed=seed), Mode.PAPER)
 
@@ -89,6 +92,7 @@ class PaperDesk:
             self.engine.mode = Mode.SAFE
             self._event("CYCLE_ERROR", "PORTFOLIO", "SAFE", (type(exc).__name__,))
             return {"mode": self.engine.mode.value, "assets": outcomes}
+        ready = []  # pass 1: data for every asset that can be considered this cycle
         for asset in self.runtime.assets:
             symbol, cls = asset.symbol, asset.asset_class
             if not self.broker.asset_eligible(symbol, cls):
@@ -115,43 +119,64 @@ class PaperDesk:
                     continue
                 if self.persist_market_data:
                     self.store.save_bars(bars)
-                quote = self.data.latest_quote(symbol, cls)
-                # Decision time is read when the decision is made, after the quote was fetched; the cycle start
-                # (``clock``) is earlier and would make a fresh quote look like it came from the future.
-                if self.clock() - quote.at > timedelta(seconds=self.policy.max_quote_age_seconds):
-                    self._event("QUOTE_BLOCK", symbol, "BLOCK", ("STALE_QUOTE",),
-                                {"feed": quote.feed, "quote_at": quote.at.isoformat()})
-                    outcomes[symbol] = "BLOCK_QUOTE"
-                    continue
-                self._event("QUOTE_ACCESS", symbol, "RECORDED",
-                            payload={"feed": quote.feed, "quote_at": quote.at.isoformat(),
-                                     "observed_at": quote.observed_at.isoformat(),
-                                     "access_latency_ms": quote.latency_ms,
-                                     "attribution": "API_REQUEST_DURATION_ONLY"})
-                if symbol in held:
-                    self._event("ORDER_MONITOR", symbol, "BLOCK", ("OPEN_ORDER_FOR_ASSET",))
-                    outcomes[symbol] = "OPEN_ORDER_HOLD"
-                    continue
-                monitor = self.engine.monitor_positions(bars)
-                if monitor and monitor[0].get("exit_reason") == "TIME_EXIT":
-                    outcomes[symbol] = monitor
-                    continue
-                quantity = int(asset.order_notional / quote.ask) if cls == AssetClass.EQUITY else round(asset.order_notional / quote.ask, 8)
-                if quantity <= 0:
-                    self._event("SIZE_BLOCK", symbol, "BLOCK", ("ORDER_NOTIONAL_BELOW_UNIT",))
-                    outcomes[symbol] = "BLOCK_SIZE"
-                    continue
-                outcomes[symbol] = self.engine.process(bars, as_of=self.clock(), reference_price=quote.ask,
-                                                       quote_at=quote.at, spread_bps=quote.spread_bps,
-                                                       quantity=quantity, feature_horizon=frame.feature_horizon,
-                                                       persist_features=self.persist_market_data)
-                if self.engine.mode == Mode.SAFE:
-                    break
+                ready.append((asset, bars, frame))
             except Exception as exc:
                 self.engine.mode = Mode.SAFE
                 self._event("CYCLE_ERROR", symbol, "SAFE", (type(exc).__name__,))
                 outcomes[symbol] = "SAFE"
                 break
+        if self.engine.mode != Mode.SAFE:
+            # Pass 2: one consistent, point-in-time view of every asset, so cross-asset strategies (relative
+            # strength) rank against the same moment, then exits and entries per asset.
+            decided_at = self.clock()
+            context = DecisionContext(decided_at, {a.symbol: features_for(b, decided_at, horizon=f.feature_horizon)
+                                                   for a, b, f in ready}, self.earnings)
+            for asset, bars, frame in ready:
+                symbol, cls = asset.symbol, asset.asset_class
+                try:
+                    quote = self.data.latest_quote(symbol, cls)
+                    # Decision time is read when the decision is made, after the quote was fetched; the cycle
+                    # start (``clock``) is earlier and would make a fresh quote look like it came from the future.
+                    if self.clock() - quote.at > timedelta(seconds=self.policy.max_quote_age_seconds):
+                        self._event("QUOTE_BLOCK", symbol, "BLOCK", ("STALE_QUOTE",),
+                                    {"feed": quote.feed, "quote_at": quote.at.isoformat()})
+                        outcomes[symbol] = "BLOCK_QUOTE"
+                        continue
+                    self._event("QUOTE_ACCESS", symbol, "RECORDED",
+                                payload={"feed": quote.feed, "quote_at": quote.at.isoformat(),
+                                         "observed_at": quote.observed_at.isoformat(),
+                                         "access_latency_ms": quote.latency_ms,
+                                         "attribution": "API_REQUEST_DURATION_ONLY"})
+                    if symbol in held:
+                        self._event("ORDER_MONITOR", symbol, "BLOCK", ("OPEN_ORDER_FOR_ASSET",))
+                        outcomes[symbol] = "OPEN_ORDER_HOLD"
+                        continue
+                    snapshot = context.snapshots.get(symbol)
+                    monitor = self.engine.monitor_positions(bars, context, snapshot)
+                    if monitor:
+                        # One position per asset, owned by the strategy that opened it: an exit was just placed,
+                        # or the position is held and no other strategy may add to it.
+                        outcomes[symbol] = monitor if monitor[0].get("exit_reason") != "HOLD" else "IN_POSITION"
+                        if self.engine.mode == Mode.SAFE:
+                            break
+                        continue
+                    quantity = int(asset.order_notional / quote.ask) if cls == AssetClass.EQUITY else round(asset.order_notional / quote.ask, 8)
+                    if quantity <= 0:
+                        self._event("SIZE_BLOCK", symbol, "BLOCK", ("ORDER_NOTIONAL_BELOW_UNIT",))
+                        outcomes[symbol] = "BLOCK_SIZE"
+                        continue
+                    outcomes[symbol] = self.engine.process(bars, as_of=self.clock(), reference_price=quote.ask,
+                                                           quote_at=quote.at, spread_bps=quote.spread_bps,
+                                                           quantity=quantity, feature_horizon=frame.feature_horizon,
+                                                           persist_features=self.persist_market_data, context=context,
+                                                           snapshot=snapshot)
+                    if self.engine.mode == Mode.SAFE:
+                        break
+                except Exception as exc:
+                    self.engine.mode = Mode.SAFE
+                    self._event("CYCLE_ERROR", symbol, "SAFE", (type(exc).__name__,))
+                    outcomes[symbol] = "SAFE"
+                    break
         # The review report re-reads the whole journal, so rebuild it only when a new outcome exists, and never in
         # replays (persist_market_data=False), where the harness computes its own statistics.
         outcome_count = len(self.store.index.outcome_ids)

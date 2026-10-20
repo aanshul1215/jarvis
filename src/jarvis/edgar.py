@@ -219,3 +219,22 @@ def fundamentals(store: LocalStorage, ticker: str, metric: str, *, as_of: dateti
         if key not in chosen or row["filed"] >= chosen[key]["filed"]:
             chosen[key] = row
     return sorted(chosen.values(), key=lambda r: r["period_end"])
+
+
+class EarningsCalendar:
+    """Earnings releases loaded once from the store and served point-in-time, for replays and the paper loop.
+
+    The paper loop builds it at start-up, so releases filed while it runs appear after the next restart (or the
+    next ``edgar-update`` plus restart); a replay sees exactly what was published by each decision moment.
+    """
+
+    def __init__(self, store: LocalStorage, tickers: list[str]):
+        import bisect
+
+        self._bisect = bisect.bisect_right
+        self._events = {t: sorted(earnings_events(store, t), key=lambda e: e["available_at"]) for t in tickers}
+        self._times = {t: [parse_utc(e["available_at"]) for e in events] for t, events in self._events.items()}
+
+    def __call__(self, ticker: str, as_of: datetime) -> list[dict]:
+        events = self._events.get(ticker, [])
+        return events[:self._bisect(self._times.get(ticker, []), as_of)]
