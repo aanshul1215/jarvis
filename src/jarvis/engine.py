@@ -43,6 +43,7 @@ class TradingEngine:
                  registry: StrategyRegistry, mode: Mode):
         self.store, self.broker, self.governor, self.registry, self.mode = store, broker, governor, registry, mode
         self._ready = False
+        self._peak: float | None = None  # equity high-water mark, loaded once from the store
 
     def reconcile(self) -> None:
         """Broker truth is checked before new risk after each process start."""
@@ -101,13 +102,16 @@ class TradingEngine:
     def _risk_state(self) -> BrokerState:
         """Broker state plus drawdown from the stored equity high-water mark (a fraction of peak equity)."""
         state = self.broker.state()
-        try:
-            peak = float(self.store.load_json(EQUITY_HIGH_WATER)["equity"])
-        except FileNotFoundError:
-            peak = 0.0
+        if self._peak is None:
+            try:
+                self._peak = float(self.store.load_json(EQUITY_HIGH_WATER)["equity"])
+            except FileNotFoundError:
+                self._peak = 0.0
+        peak = self._peak
         if state.equity > peak:
-            self.store.publish_json(EQUITY_HIGH_WATER, {"equity": state.equity, "at": iso(utc_now())})
-            peak = state.equity
+            self._peak = peak = state.equity
+            if getattr(self.store, "durable", True):  # replays keep the peak in memory only
+                self.store.publish_json(EQUITY_HIGH_WATER, {"equity": state.equity, "at": iso(utc_now())})
         drawdown = 1 - state.equity / peak if peak > 0 else 0.0
         return replace(state, drawdown=max(state.drawdown, drawdown))
 
@@ -119,7 +123,9 @@ class TradingEngine:
 
     def process(self, bars: list[Bar], *, as_of: datetime | None = None,
                 reference_price: float | None = None, spread_bps: float = 5,
-                quantity: float = 1, quote_at: datetime | None = None) -> list[dict[str, Any]]:
+                quantity: float = 1, quote_at: datetime | None = None,
+                feature_horizon: timedelta = timedelta(hours=1),
+                persist_features: bool = True) -> list[dict[str, Any]]:
         if not self._ready:
             raise BrokerError("reconcile before processing")
         now = as_of or utc_now()
@@ -130,16 +136,21 @@ class TradingEngine:
         if not valid:
             self._record("DATA_QUARANTINE", new_id("feed"), reason_codes=reasons)
             return []
-        snapshot = features_for(bars, now)
-        self.store.save_features([snapshot])
+        snapshot = features_for(bars, now, horizon=feature_horizon)
+        if persist_features:
+            self.store.save_features([snapshot])
         self._record("FEATURE_SNAPSHOT", snapshot.snapshot_id, asset_id=snapshot.asset_id,
                      payload={"snapshot_id": snapshot.snapshot_id, "values": snapshot.values,
                               "available_at": iso(snapshot.available_at)})
+        # Strategy detectors decide what is tradable; the generic scanner adds other anomalies for observation only.
+        merged = {c.trigger: c for c in scan(snapshot, now)}
+        merged.update({c.trigger: c for c in self.registry.candidates(snapshot, now, self.mode)})
         results = []
-        for candidate in scan(snapshot, now):
+        for candidate in sorted(merged.values(), key=lambda c: c.score, reverse=True):
             self._record("CANDIDATE", candidate.candidate_id, asset_id=candidate.asset_id,
                          payload={"candidate_id": candidate.candidate_id, "trigger": candidate.trigger,
-                                  "score": candidate.score, "expires_at": iso(candidate.expires_at)})
+                                  "score": candidate.score, "detected_at": iso(candidate.detected_at),
+                                  "expires_at": iso(candidate.expires_at)})
             price = reference_price if reference_price is not None else bars[-1].close
             intent = select_intent(candidate, snapshot, self.registry, self.mode, now,
                                    quantity=quantity, reference_price=price)
@@ -162,6 +173,7 @@ class TradingEngine:
             self._record("ORDER_INTENT", candidate.candidate_id, asset_id=candidate.asset_id,
                          payload={"intent_id": intent.intent_id, "client_order_id": client_id,
                                   "asset_class": intent.asset_class.value,
+                                  "decided_at": iso(now), "reference_price": intent.reference_price,
                                   "expires_at": iso(intent.expires_at),
                                   "quantity": risk.allowed_quantity, "side": intent.side,
                                   "strategy_id": intent.strategy_id, "strategy_version": intent.strategy_version,

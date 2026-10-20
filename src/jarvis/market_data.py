@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from time import perf_counter
 
 from .contracts import AssetClass, Bar, require_utc, utc_now
+from .timeframes import bar_window
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class AlpacaMarketData:
         self.crypto = CryptoHistoricalDataClient(key_id, secret)
 
     def recent_bars(self, asset_id: str, asset_class: AssetClass, *, start: datetime,
-                    end: datetime, limit: int = 200) -> tuple[list[Bar], dict]:
+                    end: datetime, limit: int = 200, timeframe: str = "1Hour") -> tuple[list[Bar], dict]:
         from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
 
@@ -46,22 +47,22 @@ class AlpacaMarketData:
         if not start < end or limit < 1 or limit > 1000:
             raise ValueError("invalid historical window or limit")
         began = perf_counter()
+        frame = TimeFrame.Day if timeframe == "1Day" else TimeFrame.Hour
         if asset_class == AssetClass.EQUITY:
             request = StockBarsRequest(symbol_or_symbols=asset_id, start=start, end=end,
-                                       timeframe=TimeFrame.Hour, limit=limit, feed=self.stock_feed)
+                                       timeframe=frame, limit=limit, feed=self.stock_feed)
             response = self.stock.get_stock_bars(request)
             feed = self.stock_feed.value
         else:
             request = CryptoBarsRequest(symbol_or_symbols=asset_id, start=start, end=end,
-                                        timeframe=TimeFrame.Hour, limit=limit)
+                                        timeframe=frame, limit=limit)
             response = self.crypto.get_crypto_bars(request)
             feed = "crypto-us-default"
         observed = utc_now()
         models = response.data.get(asset_id, [])
         bars = []
         for model in models:
-            start_at = require_utc(model.timestamp)
-            end_at = start_at + timedelta(hours=1)
+            start_at, end_at = bar_window(asset_class, timeframe, model.timestamp)
             if end_at > observed:
                 continue  # never process a still-open bar
             bars.append(Bar(asset_id, asset_class, start_at, end_at, observed, float(model.open),

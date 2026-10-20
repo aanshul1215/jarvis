@@ -48,5 +48,6 @@ All write under `JARVIS_HOME` and record a journal event. None places an order.
 | `jarvis backfill --universe FILE [--start 2016-01-01]` | Alpaca paper keys | Daily and hourly bars (raw and adjusted) into point-in-time datasets |
 | `jarvis data-check --universe FILE` | stored data | Duplicate, gap, spike, stale-price and zero-volume report |
 | `jarvis soak [--hours 24]` | nothing | Accelerated mock paper run of the full loop (Phase 1 exit test) |
+| `jarvis backtest --universe FILE --strategy ID@VERSION [--dataset 1Day-adjusted --start 2016-03-01 --end 2023-12-31 --split DEVELOPMENT]` | stored bars | Replays history through the real trading code, compares with benchmarks, applies the gate and appends to `research/experiments.jsonl`. Keep 2024 onward as the holdout: `--split HOLDOUT` may be used once per strategy configuration |
 
 `config/universe.example.json` is a proposed starting universe; copy it to `JARVIS_HOME/config/universe.json` and edit.

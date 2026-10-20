@@ -70,7 +70,7 @@ class SimMarketData:
             path.append(self._bar(symbol, cls, len(path), previous))
         return path[:count]
 
-    def recent_bars(self, symbol, cls, *, start, end, limit):
+    def recent_bars(self, symbol, cls, *, start, end, limit, timeframe="1Hour"):
         bars = self._completed(symbol, cls)
         if bars and self._rng.random() < self.amend_probability:
             self._amended.add((symbol, len(bars) - 1))  # the vendor amends the newest bar (late prints)

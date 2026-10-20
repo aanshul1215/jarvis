@@ -109,6 +109,17 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--seed", type=int, default=7)
         if name in ("backtest", "train"):
             command.add_argument("--fixture", action="store_true", help="use labeled synthetic equity and crypto histories")
+        if name == "backtest":
+            command.add_argument("--universe", help="universe JSON; its assets with stored data are replayed")
+            command.add_argument("--strategy", action="append", help="strategy-id@version (repeatable)")
+            command.add_argument("--dataset", default="1Day-adjusted", help="stored dataset, e.g. 1Day-adjusted, 1Hour-raw")
+            command.add_argument("--timeframe", default="1Day", choices=("1Day", "1Hour"))
+            command.add_argument("--start", default="2016-03-01")
+            command.add_argument("--end", default="2023-12-31", help="development period end; later data is the holdout")
+            command.add_argument("--split", default="DEVELOPMENT", choices=("DEVELOPMENT", "HOLDOUT"))
+            command.add_argument("--cash", type=float, default=10_000.0)
+            command.add_argument("--notional", type=float, default=1_000.0, help="dollars per entry")
+            command.add_argument("--seed", type=int, default=0)
         if name == "paper":
             command.add_argument("--dry-run", action="store_true", help="validate local policy and read-only paper account; send no orders")
             command.add_argument("--once", action="store_true", help="run one guarded paper decision cycle")
@@ -197,9 +208,30 @@ def main(argv: list[str] | None = None) -> int:
             checks["reason"] = f"paper account probe failed: {type(exc).__name__}"
         print(json.dumps(checks, indent=2))
         return 0 if checks["owner_policy"] == checks["paper_account"] == "PASS" else 2
+    elif args.command == "backtest" and not args.fixture:
+        if not args.universe or not args.strategy:
+            print(json.dumps({"result": "BLOCKED", "reason": "--universe and at least one --strategy are required"}))
+            return 2
+        from datetime import datetime, timezone
+        from .harness import BacktestSpec, evaluate
+        home = _home(args)
+        with LocalStorage(home, writer=False) as store:
+            assets = tuple((a.symbol, a.asset_class) for a in load_universe(Path(args.universe))
+                           if store.load_bars(a.symbol, a.asset_class, dataset=args.dataset))
+        if not assets:
+            print(json.dumps({"result": "BLOCKED", "reason": f"no stored {args.dataset} bars; run backfill first"}))
+            return 2
+        when = lambda text: datetime.fromisoformat(text).replace(tzinfo=timezone.utc)  # noqa: E731
+        spec = BacktestSpec(tuple(args.strategy), assets, args.dataset, args.timeframe, when(args.start),
+                            when(args.end), split=args.split, initial_cash=args.cash, order_notional=args.notional,
+                            seed=args.seed)
+        record = evaluate(home, spec)
+        print(json.dumps({k: record[k] for k in ("seq", "fingerprint", "status", "metrics", "trades", "turnover",
+                                                 "average_exposure", "benchmarks", "gate")}, indent=2, default=str))
+        return 0 if record["gate"]["passed"] else 1
     elif args.command in ("backtest", "train"):
         if not args.fixture:
-            print(json.dumps({"result": "BLOCKED", "reason": "only --fixture is implemented; live research data is not verified"}))
+            print(json.dumps({"result": "BLOCKED", "reason": "train needs --fixture; model training on real data arrives in Phase 7"}))
             return 2
         with LocalStorage(_home(args)) as store:
             outputs = {}

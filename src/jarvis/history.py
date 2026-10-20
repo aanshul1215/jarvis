@@ -21,9 +21,9 @@ from typing import Any
 from .contracts import AssetClass, Bar, LedgerEvent, iso, new_id, require_utc, utc_now
 from .quality import check_bars
 from .storage import LocalStorage
+from .timeframes import STEP, bar_window
 
 AVAILABILITY_LAG = {AssetClass.EQUITY: timedelta(minutes=15), AssetClass.CRYPTO: timedelta(minutes=1)}
-STEP = {"1Day": timedelta(days=1), "1Hour": timedelta(hours=1)}
 DATASETS = {AssetClass.EQUITY: (("1Day", "raw"), ("1Day", "all"), ("1Hour", "raw")),
             AssetClass.CRYPTO: (("1Day", "raw"), ("1Hour", "raw"))}
 CHUNK = timedelta(days=366)  # one request window; the SDK pages within it
@@ -69,8 +69,7 @@ def _request(asset: UniverseAsset, timeframe: str, adjustment: str, start: datet
 def to_bars(asset: UniverseAsset, timeframe: str, models: list[Any], *, source_id: str, feed: str) -> list[Bar]:
     bars = []
     for model in models:
-        start = require_utc(model.timestamp)
-        end = start + STEP[timeframe]
+        start, end = bar_window(asset.asset_class, timeframe, model.timestamp)
         bars.append(Bar(asset.symbol, asset.asset_class, start, end, end + AVAILABILITY_LAG[asset.asset_class],
                         float(model.open), float(model.high), float(model.low), float(model.close),
                         float(model.volume), source_id, feed, "ALPACA"))

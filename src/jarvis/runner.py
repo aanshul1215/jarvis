@@ -14,7 +14,9 @@ from .market_data import AlpacaMarketData
 from .review import review_outcomes
 from .risk import Governor, RiskPolicy
 from .storage import LocalStorage
+from .contracts import StrategySpec
 from .strategies import StrategyRegistry, baseline_specs
+from .timeframes import settings as timeframe_settings
 
 
 # Fallback lifetime for an entry order whose intent predates the recorded expiry field.
@@ -23,10 +25,13 @@ ENTRY_ORDER_MAX_AGE = timedelta(minutes=30)
 
 class PaperDesk:
     def __init__(self, store: LocalStorage, broker: BrokerAdapter, data: AlpacaMarketData,
-                 policy: RiskPolicy, runtime: PaperRuntime, *, clock: Callable[[], datetime] = utc_now):
+                 policy: RiskPolicy, runtime: PaperRuntime, *, clock: Callable[[], datetime] = utc_now,
+                 specs: list[StrategySpec] | None = None, seed: int = 0, persist_market_data: bool = True):
+        """``specs`` and ``persist_market_data=False`` exist for the evaluation harness; the paper CLI uses the
+        defaults (baseline strategies only, bars saved every cycle)."""
         if not policy.owner_approved or not policy.paper_enabled:
             raise ValueError("owner paper approval required")
-        available = {(spec.strategy_id, spec.version): spec for spec in baseline_specs()}
+        available = {(spec.strategy_id, spec.version): spec for spec in (specs if specs is not None else baseline_specs())}
         approved = []
         for key in runtime.strategy_versions:
             if "@" not in key:
@@ -38,7 +43,9 @@ class PaperDesk:
         self.store, self.broker, self.data = store, broker, data
         self.policy, self.runtime = policy, runtime
         self.clock = clock  # injectable so replays and soak tests can run on simulated time
-        self.engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry(approved), Mode.PAPER)
+        self.persist_market_data = persist_market_data
+        self._reviewed_outcomes = -1  # outcome count at the last review report
+        self.engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry(approved, seed=seed), Mode.PAPER)
 
     def _event(self, kind: str, asset: str, status: str, reasons: tuple[str, ...] = (), payload: dict | None = None) -> None:
         self.store.append_event(LedgerEvent(new_id("evt"), kind, utc_now(), new_id("cycle"),
@@ -93,20 +100,21 @@ class PaperDesk:
                 outcomes[symbol] = "MARKET_CLOSED"
                 continue
             try:
-                lookback = timedelta(days=30) if cls == AssetClass.EQUITY else timedelta(hours=72)
-                bars, diagnostics = self.data.recent_bars(symbol, cls, start=clock - lookback,
-                                                          end=clock, limit=500)
+                frame = timeframe_settings(self.runtime.timeframe, cls)
+                bars, diagnostics = self.data.recent_bars(symbol, cls, start=clock - frame.lookback,
+                                                          end=clock, limit=500, timeframe=self.runtime.timeframe)
                 self._event("DATA_ACCESS", symbol, "RECORDED", payload=diagnostics)
                 if len(bars) < 22:
                     self._event("DATA_BLOCK", symbol, "BLOCK", ("INSUFFICIENT_BARS",))
                     outcomes[symbol] = "BLOCK_DATA"
                     continue
-                if clock - bars[-1].end_at > timedelta(hours=2):
+                if clock - bars[-1].end_at > frame.max_bar_age:
                     self._event("DATA_BLOCK", symbol, "BLOCK", ("STALE_LAST_BAR",),
                                 {"bar_end_at": bars[-1].end_at.isoformat()})
                     outcomes[symbol] = "BLOCK_DATA"
                     continue
-                self.store.save_bars(bars)
+                if self.persist_market_data:
+                    self.store.save_bars(bars)
                 quote = self.data.latest_quote(symbol, cls)
                 # Decision time is read when the decision is made, after the quote was fetched; the cycle start
                 # (``clock``) is earlier and would make a fresh quote look like it came from the future.
@@ -135,7 +143,8 @@ class PaperDesk:
                     continue
                 outcomes[symbol] = self.engine.process(bars, as_of=self.clock(), reference_price=quote.ask,
                                                        quote_at=quote.at, spread_bps=quote.spread_bps,
-                                                       quantity=quantity)
+                                                       quantity=quantity, feature_horizon=frame.feature_horizon,
+                                                       persist_features=self.persist_market_data)
                 if self.engine.mode == Mode.SAFE:
                     break
             except Exception as exc:
@@ -143,5 +152,10 @@ class PaperDesk:
                 self._event("CYCLE_ERROR", symbol, "SAFE", (type(exc).__name__,))
                 outcomes[symbol] = "SAFE"
                 break
-        review_outcomes(self.store)
+        # The review report re-reads the whole journal, so rebuild it only when a new outcome exists, and never in
+        # replays (persist_market_data=False), where the harness computes its own statistics.
+        outcome_count = len(self.store.index.outcome_ids)
+        if self.persist_market_data and outcome_count != self._reviewed_outcomes:
+            review_outcomes(self.store)
+            self._reviewed_outcomes = outcome_count
         return {"mode": self.engine.mode.value, "assets": outcomes}

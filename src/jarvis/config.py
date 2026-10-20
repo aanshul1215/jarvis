@@ -50,12 +50,16 @@ class PaperRuntime:
     assets: tuple[PaperAsset, ...]
     strategy_versions: tuple[str, ...]
     poll_seconds: int
+    timeframe: str = "1Hour"  # bar size the strategies decide on: "1Hour" or "1Day"
 
 
 def load_paper_runtime(home: Path, policy: RiskPolicy) -> PaperRuntime:
     data = json.loads((home / "config" / "paper-runtime.json").read_text())
-    if set(data) != {"assets", "strategy_versions", "poll_seconds"}:
+    if not {"assets", "strategy_versions", "poll_seconds"} <= set(data) <= {"assets", "strategy_versions",
+                                                                            "poll_seconds", "timeframe"}:
         raise ValueError("invalid paper runtime keys")
+    if data.get("timeframe", "1Hour") not in ("1Hour", "1Day"):
+        raise ValueError("timeframe must be 1Hour or 1Day")
     if type(data["poll_seconds"]) is not int or data["poll_seconds"] < 60:
         raise ValueError("paper polling must be at least 60 seconds")
     versions = data["strategy_versions"]
@@ -75,4 +79,4 @@ def load_paper_runtime(home: Path, policy: RiskPolicy) -> PaperRuntime:
         assets.append(asset)
     if not assets or len({a.symbol for a in assets}) != len(assets):
         raise ValueError("paper assets missing or duplicated")
-    return PaperRuntime(tuple(assets), tuple(versions), data["poll_seconds"])
+    return PaperRuntime(tuple(assets), tuple(versions), data["poll_seconds"], data.get("timeframe", "1Hour"))

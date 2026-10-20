@@ -34,7 +34,7 @@ class FixtureData:
         self.anchor = utc_now()
         self.revise_last = False
 
-    def recent_bars(self, symbol, cls, *, start, end, limit):
+    def recent_bars(self, symbol, cls, *, start, end, limit, timeframe="1Hour"):
         source = synthetic_bars(symbol, cls)
         shift = self.anchor - source[-1].end_at - timedelta(minutes=30)
         bars = [replace(b, start_at=b.start_at + shift, end_at=b.end_at + shift,
