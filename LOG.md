@@ -98,3 +98,26 @@ Append dated entries with branch, commit, commands actually run, evidence, failu
 - Strategies (`library_specs`, all RESEARCH): trend-sma200, meanrev-rsi2, volatility-breakout, relative-strength (top 3 enter, outside top 5 exits, needs ≥6 assets), earnings-drift (8-K 2.02 release during the latest bar, >2% reaction on ≥1.5× volume, 20-bar hold). Pre-registered with evidence tags and an evaluation plan in `docs/06-strategies/STRATEGY_REGISTER.md` before any real-data run.
 - Tests: 12 new; the integration tests were strengthened after the first version passed trivially (4 synthetic stocks were too few for relative strength to rank, and random release dates rarely triggered the drift rule) — now every strategy must trade in the replay and pass the future-poisoning test. `pytest -q` **62 passed** on Windows (3 min 50 s).
 - Not run on real market data: blocked on Alpaca paper keys for `backfill`.
+
+## 2026-10-19 — Phase 5 situational-awareness models (pre-registered)
+
+- New modules:
+  - `volatility.py`: rolling-20 baseline; EWMA 0.94; HAR (levels, OLS per horizon); GARCH(1,1) MLE. Rolling 1,000-return window, refit at each month start.
+  - `regime.py`: none/sma200 references; trend×volatility; two-state Gaussian HMM (EM fit, forward filter only); FRED stress ablation.
+  - `riskmodel.py`: diagonal baseline; sample covariance; Ledoit–Wolf constant-correlation shrinkage; portfolio volatility and a crowding ratio.
+  - `costs.py`: spread + fee + square-root impact model; realised shortfall from the journal.
+  - `awareness.py`: per-cycle `SITUATION` snapshot (stress, breadth, event calendar, crypto, per-asset regime and volatility, desk state).
+  - `studies.py` + `model-study` / `cost-report` commands; FRED long-history price series for the studies (kept out of Git: copyrighted).
+- Integration:
+  - Volatility sizing in the runner and backtests (`sizing="volatility"`), capped at the owner's per-order limit, with quantities rounded down.
+  - Strategy register amended (before any real run) to use it.
+- Pre-registration: `docs/07-awareness/MODEL_REGISTER.md`, committed before any model touched real data. Reference checks were made by a research agent, with FETCHED/RECALLED tags.
+- An independent review agent checked look-ahead (future-scaling tests on every model), forecast parity between study and live code, and the Ledoit–Wolf formula against the authors' covCor.m (exact match). It found:
+  1. Live volatility sizing would go SAFE: the bar request limit exceeded 1,000, and Alpaca returns the oldest bars first. Fixed: the whole window is fetched and the newest bars kept.
+  2. Pass-2 awareness code ran outside the SAFE error handling. Fixed.
+  3. Live paper did not record `SITUATION`. Fixed.
+  4. Scaled orders could exceed the owner cap and be blocked. Fixed: capped.
+  5. The Diebold–Mariano test was liberal: by simulation, 7–16% false alarms at 5%. Changed to an Andrews bandwidth (≥2h), which simulated at 5–8%, with pooling per asset group.
+  6. Cost shortfall was measured from the ask, not the mid. Fixed.
+  7. Minor issues fixed as well: hmm2 now has a live path and a parity test; deterministic HMM fits; NaN guard; the holdout requires a recorded development run; stress flags are revision-aware.
+- Also repaired 13 mis-encoded lines in EXECUTION.md, which came from an earlier commit.

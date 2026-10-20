@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Callable
@@ -9,7 +10,7 @@ from typing import Callable
 from .broker import BrokerAdapter, BrokerError
 from .config import PaperRuntime
 from .contracts import AssetClass, LedgerEvent, Mode, iso, new_id, parse_utc, utc_now
-from .engine import TradingEngine
+from .engine import DUST_NOTIONAL, TradingEngine
 from .market_data import AlpacaMarketData
 from .review import review_outcomes
 from .risk import Governor, RiskPolicy
@@ -18,6 +19,8 @@ from .contracts import StrategySpec
 from .market import features_for
 from .strategies import DecisionContext, StrategyRegistry, baseline_specs
 from .timeframes import settings as timeframe_settings
+from .regime import REGIME_NAMES, live_label
+from .volatility import HISTORY_BARS, HISTORY_DAYS, bar_returns, forecast_now, scaled_notional
 
 
 # Fallback lifetime for an entry order whose intent predates the recorded expiry field.
@@ -28,7 +31,7 @@ class PaperDesk:
     def __init__(self, store: LocalStorage, broker: BrokerAdapter, data: AlpacaMarketData,
                  policy: RiskPolicy, runtime: PaperRuntime, *, clock: Callable[[], datetime] = utc_now,
                  specs: list[StrategySpec] | None = None, seed: int = 0, persist_market_data: bool = True,
-                 earnings: Callable[[str, datetime], list[dict]] | None = None):
+                 earnings: Callable[[str, datetime], list[dict]] | None = None, situation=None):
         """``specs`` and ``persist_market_data=False`` exist for the evaluation harness; the paper CLI uses the
         defaults (baseline strategies only, bars saved every cycle)."""
         if not policy.owner_approved or not policy.paper_enabled:
@@ -47,6 +50,9 @@ class PaperDesk:
         self.clock = clock  # injectable so replays and soak tests can run on simulated time
         self.persist_market_data = persist_market_data
         self.earnings = earnings  # earnings releases known at a time, for event strategies
+        self.situation = situation  # awareness.SituationBuilder: recorded each cycle when given
+        self._vol_cache: dict = {}  # fitted volatility-model parameters, refitted at month starts
+        self._regime_cache: dict = {}  # fitted hidden-Markov parameters, the same way
         self._reviewed_outcomes = -1  # outcome count at the last review report
         self.engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry(approved, seed=seed), Mode.PAPER)
 
@@ -82,6 +88,16 @@ class PaperDesk:
                             {"client_order_id": client_id, "deadline": iso(deadline)})
         return held
 
+    def _asset_state(self, bars) -> dict:
+        """Per-asset awareness: trend/volatility regime and (daily bars) the volatility forecast used for sizing."""
+        if self.runtime.timeframe != "1Day":
+            return {}
+        r, dates, closes = bar_returns(bars)
+        label = live_label(self.runtime.regime_model, r, dates, closes, cache=self._regime_cache)
+        variance = forecast_now(self.runtime.volatility_model, r, dates, cache=self._vol_cache)             if self.runtime.sizing == "volatility" else None
+        return {"regime": REGIME_NAMES.get(label) if label is not None else None,
+                "forecast_daily_vol": variance ** 0.5 if variance is not None and variance > 0 else None}
+
     def run_once(self, *, now: datetime | None = None) -> dict:
         self.engine.reconcile()
         clock = now or self.clock()
@@ -105,8 +121,11 @@ class PaperDesk:
                 continue
             try:
                 frame = timeframe_settings(self.runtime.timeframe, cls)
-                bars, diagnostics = self.data.recent_bars(symbol, cls, start=clock - frame.lookback,
-                                                          end=clock, limit=500, timeframe=self.runtime.timeframe)
+                lookback, limit = frame.lookback, 500
+                if self.runtime.sizing == "volatility":  # fitted forecasters need about four years of daily bars
+                    lookback, limit = max(lookback, timedelta(days=HISTORY_DAYS[cls])), HISTORY_BARS
+                bars, diagnostics = self.data.recent_bars(symbol, cls, start=clock - lookback,
+                                                          end=clock, limit=limit, timeframe=self.runtime.timeframe)
                 self._event("DATA_ACCESS", symbol, "RECORDED", payload=diagnostics)
                 if len(bars) < 22:
                     self._event("DATA_BLOCK", symbol, "BLOCK", ("INSUFFICIENT_BARS",))
@@ -129,8 +148,23 @@ class PaperDesk:
             # Pass 2: one consistent, point-in-time view of every asset, so cross-asset strategies (relative
             # strength) rank against the same moment, then exits and entries per asset.
             decided_at = self.clock()
-            context = DecisionContext(decided_at, {a.symbol: features_for(b, decided_at, horizon=f.feature_horizon)
-                                                   for a, b, f in ready}, self.earnings)
+            try:
+                snapshots = {a.symbol: features_for(b, decided_at, horizon=f.feature_horizon) for a, b, f in ready}
+                states = {a.symbol: self._asset_state(b) for a, b, _ in ready}
+                situation = None
+                if self.situation is not None:
+                    state = self.engine._risk_state()
+                    values = state.position_values or {}
+                    situation = self.situation.build(decided_at, snapshots, assets=states, desk={
+                        "drawdown": state.drawdown, "equity": state.equity,
+                        "open_positions": sum(1 for v in values.values() if abs(v) >= DUST_NOTIONAL),
+                        "gross_exposure": sum(abs(v) for v in values.values()) / state.equity if state.equity > 0 else None})
+                    self._event("SITUATION", "*", "RECORDED", payload=situation)
+                context = DecisionContext(decided_at, snapshots, self.earnings, situation)
+            except Exception as exc:  # same rule as everywhere in the cycle: an unexpected error stops trading
+                self.engine.mode = Mode.SAFE
+                self._event("CYCLE_ERROR", "*", "SAFE", (type(exc).__name__,))
+                ready = []
             for asset, bars, frame in ready:
                 symbol, cls = asset.symbol, asset.asset_class
                 try:
@@ -160,7 +194,23 @@ class PaperDesk:
                         if self.engine.mode == Mode.SAFE:
                             break
                         continue
-                    quantity = int(asset.order_notional / quote.ask) if cls == AssetClass.EQUITY else round(asset.order_notional / quote.ask, 8)
+                    notional = asset.order_notional
+                    vol = states[symbol].get("forecast_daily_vol")
+                    sizing = {"sizing": self.runtime.sizing, "base_notional": asset.order_notional,
+                              "volatility_model": self.runtime.volatility_model, "forecast_daily_vol": vol,
+                              "decision_mid": (quote.bid + quote.ask) / 2}
+                    if self.runtime.sizing == "volatility":
+                        notional = scaled_notional(asset.order_notional, vol)
+                        if notional is None:
+                            self._event("SIZE_BLOCK", symbol, "BLOCK", ("NO_VOLATILITY_FORECAST",))
+                            outcomes[symbol] = "BLOCK_SIZE"
+                            continue
+                        # A calm asset may be scaled up to 1.5x its base, but never past the owner's per-order cap.
+                        notional = min(notional, self.policy.max_order_notional)
+                    sizing["notional"] = notional
+                    # Round down so the order value never exceeds the chosen notional.
+                    quantity = int(notional / quote.ask) if cls == AssetClass.EQUITY \
+                        else math.floor(notional / quote.ask * 1e8) / 1e8
                     if quantity <= 0:
                         self._event("SIZE_BLOCK", symbol, "BLOCK", ("ORDER_NOTIONAL_BELOW_UNIT",))
                         outcomes[symbol] = "BLOCK_SIZE"
@@ -169,7 +219,7 @@ class PaperDesk:
                                                            quote_at=quote.at, spread_bps=quote.spread_bps,
                                                            quantity=quantity, feature_horizon=frame.feature_horizon,
                                                            persist_features=self.persist_market_data, context=context,
-                                                           snapshot=snapshot)
+                                                           snapshot=snapshot, sizing=sizing)
                     if self.engine.mode == Mode.SAFE:
                         break
                 except Exception as exc:

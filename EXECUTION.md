@@ -1,6 +1,6 @@
 # JARVIS execution register
 
-## Phase 1 foundation fixes â€” 2026-10-19
+## Phase 1 foundation fixes — 2026-10-19
 
 Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c82`). Plan: [Final workflow](https://github.com/aanshul1215/jarvis/blob/main/Final%20workflow(feedback%20requierd).md), Phase 1.
 
@@ -12,27 +12,27 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Any open order froze every asset; no cancel path | TESTED LOCALLY | `test_expired_entry_order_is_cancelled_and_frees_the_desk`, `test_open_order_holds_only_its_own_asset` |
 | Vendor-amended bar sent the desk to SAFE | TESTED LOCALLY | `test_vendor_bar_revision_is_stored_not_safe`; revision history kept, `load_bars(as_of=...)` |
 | Daily-loss and drawdown limits never evaluated | TESTED LOCALLY (mock + fake client) | `test_daily_loss_limit_blocks_new_risk`, `test_drawdown_from_stored_peak_blocks_new_risk`, `test_alpaca_state_reports_daily_pnl_and_normalises_crypto_symbols` |
-| Crypto fee taken from the received coin broke reconciliation | TESTED WITH MOCK â€” ACCOUNT BEHAVIOUR UNVERIFIED | `test_crypto_fee_shortfall_is_recorded_but_a_real_mismatch_is_still_safe`; confirm fee posting on the first paper fill |
-| Crypto position symbol format (`BTCUSD` vs `BTC/USD`) | DEFENSIVE â€” ACCOUNT FORMAT UNVERIFIED | `test_symbol_normalisation`; confirm in the Phase 0 probe |
+| Crypto fee taken from the received coin broke reconciliation | TESTED WITH MOCK — ACCOUNT BEHAVIOUR UNVERIFIED | `test_crypto_fee_shortfall_is_recorded_but_a_real_mismatch_is_still_safe`; confirm fee posting on the first paper fill |
+| Crypto position symbol format (`BTCUSD` vs `BTC/USD`) | DEFENSIVE — ACCOUNT FORMAT UNVERIFIED | `test_symbol_normalisation`; confirm in the Phase 0 probe |
 | CI on Windows and Linux | PASSING | 8/8 checks green on the first run (2026-10-19) |
 | 24-hour mock paper soak (Phase 1 exit test) | PASSED (MOCK) | `jarvis soak --hours 24 --poll-seconds 60 --seed 7`: 1,440/1,440 cycles, never stopped, 0 cycle errors, 0 overdue orders, 14,645 journal events re-verified; 858 s wall time. Seed 7 produced only one trade, so path coverage relies on `tests/test_soak.py` (seed 11: cancel, partial fill, late fill, fee adjustment, bar revisions, session skips). |
 | Defects found by the soak | FIXED | Sell quantity rounded up past the position (now rounded down to 8 decimals; under-$1 leftovers treated as flat); decision time taken before the quote was fetched; no outcome for partially filled entries. |
 
-## Phase 2 data layer â€” 2026-10-19
+## Phase 2 data layer — 2026-10-19
 
 | Item | Status | Evidence |
 |---|---|---|
 | Multiple datasets per asset (`1Day-raw`, `1Day-adjusted`, `1Hour-raw`, live `bars`) and generic hash-checked tables | TESTED LOCALLY | `tests/test_phase2_data.py` |
 | FRED market-stress series (VIX, 3-month VIX, 10y, 2y, 10y-2y, 3-month bill, Baa credit spread) with publication-time availability and revisions | TESTED LOCALLY + LIVE DOWNLOAD | Live run 2026-10-19: ~84,000 observations, re-run adds 0; point-in-time check on 2020-03-16 returned Friday's VIX close 57.83 and Thursday's 10y yield |
 | Excluded series | DECIDED | High-yield spread (FRED keeps ~3 years only); NFCI and STLFSI4 (revised after publication; need vintages) |
-| Alpaca history back-fill (SIP, raw and adjusted, deterministic availability) | TESTED WITH FAKE CLIENT â€” NEEDS PAPER KEYS | Rebuild from scratch gives byte-identical files; `jarvis backfill` fails closed without keys |
+| Alpaca history back-fill (SIP, raw and adjusted, deterministic availability) | TESTED WITH FAKE CLIENT — NEEDS PAPER KEYS | Rebuild from scratch gives byte-identical files; `jarvis backfill` fails closed without keys |
 | Data-quality checks (duplicates, gaps, spikes, stale prices, zero volume) | TESTED LOCALLY | `jarvis data-check` |
-| Proposed starting universe (27 stocks/ETFs + BTC/ETH) | PROPOSED â€” OWNER TO CONFIRM | `config/universe.example.json` |
+| Proposed starting universe (27 stocks/ETFs + BTC/ETH) | PROPOSED — OWNER TO CONFIRM | `config/universe.example.json` |
 | SEC EDGAR filings, earnings releases and fundamentals | TESTED LOCALLY + LIVE RUN | Live 2026-10-19 (AAPL, MSFT, SPY): ~2,200 filings, 87 earnings releases timed from index pages, ~3,100 fundamental values; re-run costs 3 requests per company. The submissions JSON `acceptanceDateTime` was found to be unreliable (8 h off for AAPL earnings 8-Ks), so earnings use the index-page "Accepted" time |
-| Event calendars (FOMC decisions, CPI and jobs releases) | TESTED LOCALLY + LIVE RUN | Live build: 381 events 2016â€“2027 (8 FOMC, 12 CPI, 12 jobs per year); 2020 emergency meetings stored as unscheduled, the cancelled 17â€“18 March 2020 meeting never counts as upcoming |
+| Event calendars (FOMC decisions, CPI and jobs releases) | TESTED LOCALLY + LIVE RUN | Live build: 381 events 2016–2027 (8 FOMC, 12 CPI, 12 jobs per year); 2020 emergency meetings stored as unscheduled, the cancelled 17–18 March 2020 meeting never counts as upcoming |
 | Breadth universe, news/social collectors | NOT STARTED | Collectors need source decisions (Reddit app credentials; Alpaca news once keys exist) |
 
-## Phase 3 evaluation harness â€” 2026-10-19
+## Phase 3 evaluation harness — 2026-10-19
 
 | Item | Status | Evidence |
 |---|---|---|
@@ -44,10 +44,10 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Gate: leak alarms, â‰¥30 trades, block-bootstrap significance vs benchmark with Bonferroni correction across registered trials, â‰¥60% of years beating the benchmark, positive with doubled costs | TESTED | random entry fails (two seeds; second seed faces a stricter bar) |
 | Future-poisoning leak test (signals and order inputs before a cut-off must not change when later bars are scrambled) | TESTED | Planted v1-style leak (Sharpe â‰ˆ 2.2, below the statistical alarm) flagged; honest run of the same strategy passes |
 | Append-only, hash-chained experiment registry; holdout usable once per strategy configuration | TESTED | `test_holdout_may_be_evaluated_once` |
-| Performance | MEASURED | 6-month replay 20.2 s â†’ 0.7 s after removing a per-cycle journal re-read; full evaluation of 2.3 years Ã— 4 stocks (base, doubled costs, benchmarks, 8 poisoning cut-offs) â‰ˆ 20â€“35 s |
-| Real-data evaluation | BLOCKED â€” NEEDS ALPACA PAPER KEYS | `jarvis backtest --universe ... --strategy ...` runs once `backfill` has data |
+| Performance | MEASURED | 6-month replay 20.2 s → 0.7 s after removing a per-cycle journal re-read; full evaluation of 2.3 years × 4 stocks (base, doubled costs, benchmarks, 8 poisoning cut-offs) ≈ 20–35 s |
+| Real-data evaluation | BLOCKED — NEEDS ALPACA PAPER KEYS | `jarvis backtest --universe ... --strategy ...` runs once `backfill` has data |
 
-## Phase 4 strategy library â€” 2026-10-19
+## Phase 4 strategy library — 2026-10-19
 
 | Item | Status | Evidence |
 |---|---|---|
@@ -55,8 +55,8 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Strategy interface: entry score with cross-asset context; strategy-owned exits; ATR stop-loss; maximum holding period; one position per asset | TESTED | `test_engine_applies_the_owning_strategys_stop_loss_and_signal_exit` |
 | Paper loop in two passes (gather, then decide on one consistent point-in-time view of all assets) | TESTED | full suite |
 | Point-in-time earnings calendar for event strategies (harness and paper command) | TESTED | `test_earnings_calendar_is_point_in_time` |
-| Five strategies pre-registered before any real-data run: trend-sma200, meanrev-rsi2, volatility-breakout, relative-strength, earnings-drift (plus the breakout baseline and random control) | REGISTERED â€” NOT YET EVALUATED ON REAL DATA | `docs/06-strategies/STRATEGY_REGISTER.md`; unit tests per rule; every strategy trades in a synthetic replay and passes the future-poisoning test |
-| Phase 4 exit test (each strategy has an out-of-sample daily return series) | BLOCKED â€” NEEDS ALPACA PAPER KEYS | The development runs (2016-03-01 to 2023-12-31) are pre-registered; results will be appended to the register |
+| Five strategies pre-registered before any real-data run: trend-sma200, meanrev-rsi2, volatility-breakout, relative-strength, earnings-drift (plus the breakout baseline and random control) | REGISTERED — NOT YET EVALUATED ON REAL DATA | `docs/06-strategies/STRATEGY_REGISTER.md`; unit tests per rule; every strategy trades in a synthetic replay and passes the future-poisoning test |
+| Phase 4 exit test (each strategy has an out-of-sample daily return series) | BLOCKED — NEEDS ALPACA PAPER KEYS | The development runs (2016-03-01 to 2023-12-31) are pre-registered; results will be appended to the register |
 
 ## Implementation dependency map — 2026-10-18
 

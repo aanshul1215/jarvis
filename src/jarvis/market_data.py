@@ -44,18 +44,18 @@ class AlpacaMarketData:
 
         require_utc(start)
         require_utc(end)
-        if not start < end or limit < 1 or limit > 1000:
+        if not start < end or limit < 1 or limit > 5000:
             raise ValueError("invalid historical window or limit")
         began = perf_counter()
         frame = TimeFrame.Day if timeframe == "1Day" else TimeFrame.Hour
         if asset_class == AssetClass.EQUITY:
             request = StockBarsRequest(symbol_or_symbols=asset_id, start=start, end=end,
-                                       timeframe=frame, limit=limit, feed=self.stock_feed)
+                                       timeframe=frame, feed=self.stock_feed)
             response = self.stock.get_stock_bars(request)
             feed = self.stock_feed.value
         else:
             request = CryptoBarsRequest(symbol_or_symbols=asset_id, start=start, end=end,
-                                        timeframe=frame, limit=limit)
+                                        timeframe=frame)
             response = self.crypto.get_crypto_bars(request)
             feed = "crypto-us-default"
         observed = utc_now()
@@ -68,6 +68,9 @@ class AlpacaMarketData:
             bars.append(Bar(asset_id, asset_class, start_at, end_at, observed, float(model.open),
                             float(model.high), float(model.low), float(model.close), float(model.volume),
                             "ALPACA_MARKET_DATA", feed, "ALPACA"))
+        # Alpaca returns bars oldest first from ``start``, and a request limit would keep the oldest ones. The whole
+        # window is fetched (the SDK pages through it) and only the newest ``limit`` completed bars are kept.
+        bars = bars[-limit:]
         return bars, {"feed": feed, "requested_start": start.isoformat(), "requested_end": end.isoformat(),
                       "observed_at": observed.isoformat(), "access_latency_ms": round((perf_counter() - began) * 1000, 3),
                       "rows": len(bars), "attribution": "API_REQUEST_DURATION_ONLY"}

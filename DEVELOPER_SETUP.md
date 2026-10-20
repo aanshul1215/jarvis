@@ -42,12 +42,17 @@ All write under `JARVIS_HOME` and record a journal event. None places an order.
 
 | Command | Needs | What it does |
 |---|---|---|
-| `jarvis macro-update` | nothing | FRED market-stress series (VIX, 3-month VIX, Treasury yields, T-bill, Baa credit spread) with publication-time availability |
+| `jarvis macro-update` | nothing | FRED market-stress series (VIX, 3-month VIX, Treasury yields, T-bill, Baa credit spread) with publication-time availability, plus long-history index and crypto closes (NASDAQ, S&P 500, Dow, Coinbase BTC/ETH) for the Phase 5 model studies. The price series are copyrighted: they stay in `JARVIS_HOME` and must never be committed |
 | `jarvis calendar-update` | nothing | FOMC decisions and CPI/jobs release dates 2016 onward, plus the published schedule ahead |
 | `jarvis edgar-update --universe FILE` | `JARVIS_SEC_USER_AGENT` | SEC filings, earnings-release times and fundamentals for the universe's stocks |
 | `jarvis backfill --universe FILE [--start 2016-01-01]` | Alpaca paper keys | Daily and hourly bars (raw and adjusted) into point-in-time datasets |
 | `jarvis data-check --universe FILE` | stored data | Duplicate, gap, spike, stale-price and zero-volume report |
 | `jarvis soak [--hours 24]` | nothing | Accelerated mock paper run of the full loop (Phase 1 exit test) |
 | `jarvis backtest --universe FILE --strategy ID@VERSION [--dataset 1Day-adjusted --start 2016-03-01 --end 2023-12-31 --split DEVELOPMENT]` | stored bars | Replays history through the real trading code, compares with benchmarks, applies the gate and appends to `research/experiments.jsonl`. Keep 2024 onward as the holdout: `--split HOLDOUT` may be used once per strategy configuration |
+
+| `jarvis model-study --kind volatility\|regime\|risk [--source fred\|bars --universe FILE --split DEVELOPMENT]` | `macro-update` (fred) or `backfill` (bars) | Phase 5 pre-registered comparison of each situational-awareness model with its baseline (`docs/07-awareness/MODEL_REGISTER.md`); appends to `research/model_studies.jsonl`; `--split HOLDOUT` once per study |
+| `jarvis cost-report` | paper fills | Realised cost of each filled order against the fixed assumption and the cost model (needs 50+ fills) |
+
+Backtests accept `--sizing volatility --volatility-model <winner>` to size each entry by the forecast volatility (daily bars).
 
 `config/universe.example.json` is a proposed starting universe; copy it to `JARVIS_HOME/config/universe.json` and edit.

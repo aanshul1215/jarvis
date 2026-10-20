@@ -80,3 +80,37 @@ def block_bootstrap_pvalue(excess: np.ndarray, *, block: int = 20, resamples: in
     index = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(resamples, -1)[:, :n] % n
     means = centred[index].mean(axis=1)
     return float((np.sum(means >= observed) + 1) / (resamples + 1))
+
+
+def diebold_mariano(differential: np.ndarray, horizon: int = 1) -> dict:
+    """One-sided Diebold-Mariano test that the mean loss differential is above zero.
+
+    ``differential`` is baseline loss minus candidate loss per forecast (positive = candidate better). The long-run
+    variance uses a Bartlett (Newey-West) kernel. The lag count is Andrews' (1991) AR(1) plug-in bandwidth, and never
+    fewer than 2h: overlapping h-step targets are autocorrelated by construction, and loss differences of volatility
+    forecasts are persistent. With the textbook h - 1 lags, simulated nulls rejected 7-16% of the time at a nominal
+    5%; with this rule, 5-8% (checked 2026-10-19), so p-values are still slightly optimistic. The Harvey-Leybourne-
+    Newbold (1997) small-sample factor is applied, and the statistic is compared with a t distribution, T - 1 df.
+    """
+    from scipy import stats
+
+    d = np.asarray(differential, dtype=float)
+    d = d[np.isfinite(d)]
+    t = len(d)
+    if t < 30:
+        return {"n": t, "mean": float(np.mean(d)) if t else None, "statistic": None, "p_value": 1.0}
+    centred = d - d.mean()
+    denominator = float(np.dot(centred[:-1], centred[:-1]))
+    rho = float(np.dot(centred[1:], centred[:-1])) / denominator if denominator > 0 else 0.0
+    rho = min(max(rho, -0.97), 0.97)
+    andrews = 1.1447 * (4 * rho ** 2 / ((1 - rho) ** 2 * (1 + rho) ** 2) * t) ** (1 / 3)
+    lags = min(t - 1, max(2 * horizon, int(math.ceil(andrews))))
+    variance = float(np.dot(centred, centred) / t)
+    for lag in range(1, lags + 1):
+        variance += 2 * (1 - lag / (lags + 1)) * float(np.dot(centred[lag:], centred[:-lag]) / t)
+    if variance <= 0:
+        return {"n": t, "mean": float(d.mean()), "statistic": None, "p_value": 1.0}
+    statistic = float(d.mean() / math.sqrt(variance / t))
+    statistic *= math.sqrt((t + 1 - 2 * horizon + horizon * (horizon - 1) / t) / t)
+    return {"n": t, "mean": float(d.mean()), "statistic": statistic, "lags": lags,
+            "p_value": float(stats.t.sf(statistic, df=t - 1))}

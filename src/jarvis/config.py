@@ -51,12 +51,28 @@ class PaperRuntime:
     strategy_versions: tuple[str, ...]
     poll_seconds: int
     timeframe: str = "1Hour"  # bar size the strategies decide on: "1Hour" or "1Day"
+    sizing: str = "fixed"     # "fixed": order_notional; "volatility": scaled by the forecast (daily bars only)
+    volatility_model: str = "rolling20"  # the Phase 5 study's winner (docs/07-awareness/MODEL_REGISTER.md)
+    regime_model: str = "trend_vol"      # regime label recorded for awareness: none, sma200, trend_vol or hmm2
+
+    def __post_init__(self) -> None:
+        from .volatility import MODELS
+
+        if self.sizing not in ("fixed", "volatility"):
+            raise ValueError("sizing must be fixed or volatility")
+        if self.sizing == "volatility" and self.timeframe != "1Day":
+            raise ValueError("volatility sizing is validated on daily bars only")
+        if self.volatility_model not in MODELS:
+            raise ValueError(f"unknown volatility model {self.volatility_model}")
+        if self.regime_model not in ("none", "sma200", "trend_vol", "hmm2"):
+            raise ValueError(f"unknown regime model {self.regime_model}")
 
 
 def load_paper_runtime(home: Path, policy: RiskPolicy) -> PaperRuntime:
     data = json.loads((home / "config" / "paper-runtime.json").read_text())
     if not {"assets", "strategy_versions", "poll_seconds"} <= set(data) <= {"assets", "strategy_versions",
-                                                                            "poll_seconds", "timeframe"}:
+                                                                            "poll_seconds", "timeframe", "sizing",
+                                                                            "volatility_model", "regime_model"}:
         raise ValueError("invalid paper runtime keys")
     if data.get("timeframe", "1Hour") not in ("1Hour", "1Day"):
         raise ValueError("timeframe must be 1Hour or 1Day")
@@ -79,4 +95,6 @@ def load_paper_runtime(home: Path, policy: RiskPolicy) -> PaperRuntime:
         assets.append(asset)
     if not assets or len({a.symbol for a in assets}) != len(assets):
         raise ValueError("paper assets missing or duplicated")
-    return PaperRuntime(tuple(assets), tuple(versions), data["poll_seconds"], data.get("timeframe", "1Hour"))
+    return PaperRuntime(tuple(assets), tuple(versions), data["poll_seconds"], data.get("timeframe", "1Hour"),
+                        data.get("sizing", "fixed"), data.get("volatility_model", "rolling20"),
+                        data.get("regime_model", "trend_vol"))

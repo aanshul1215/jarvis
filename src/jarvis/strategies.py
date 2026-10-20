@@ -26,6 +26,7 @@ class DecisionContext:
     now: datetime
     snapshots: dict[str, FeatureSnapshot] = field(default_factory=dict)  # every asset processed this cycle
     earnings: Callable[[str, datetime], list[dict]] | None = None        # releases known at a time
+    situation: dict | None = None                                         # awareness.SituationBuilder output
 
     def rank(self, asset_id: str, feature: str) -> tuple[int, int] | None:
         """(rank, count) of ``asset_id`` by ``feature`` among same-class assets, 1 = highest."""

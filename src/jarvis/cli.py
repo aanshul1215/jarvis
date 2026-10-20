@@ -21,7 +21,7 @@ from .review import review_outcomes
 from .runner import PaperDesk
 from .simulation import run_soak
 from .history import alpaca_clients, backfill, dataset_name, DATASETS, default_start, load_universe
-from .macro import SERIES, update_macro
+from .macro import PRICE_SERIES, SERIES, update_macro
 from .quality import check_bars
 from .edgar import EdgarClient, update_edgar
 from .calendars import http_text, update_calendars
@@ -96,7 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--home", help="JARVIS_HOME outside the Git checkout")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
-                 "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update"):
+                 "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
+                 "cost-report"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -120,6 +121,14 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--cash", type=float, default=10_000.0)
             command.add_argument("--notional", type=float, default=1_000.0, help="dollars per entry")
             command.add_argument("--seed", type=int, default=0)
+            command.add_argument("--sizing", default="fixed", choices=("fixed", "volatility"))
+            command.add_argument("--volatility-model", default="rolling20", help="Phase 5 study winner")
+        if name == "model-study":
+            command.add_argument("--kind", required=True, choices=("volatility", "regime", "risk"))
+            command.add_argument("--source", default="fred", choices=("fred", "bars"),
+                                 help="fred: long index/crypto histories; bars: the universe's stored daily bars")
+            command.add_argument("--universe", help="universe JSON (needed with --source bars)")
+            command.add_argument("--split", default="DEVELOPMENT", choices=("DEVELOPMENT", "HOLDOUT"))
         if name == "paper":
             command.add_argument("--dry-run", action="store_true", help="validate local policy and read-only paper account; send no orders")
             command.add_argument("--once", action="store_true", help="run one guarded paper decision cycle")
@@ -175,7 +184,9 @@ def main(argv: list[str] | None = None) -> int:
                     data = AlpacaMarketData(key, secret)
                     from .edgar import EarningsCalendar
                     earnings = EarningsCalendar(store, [a.symbol for a in runtime.assets if a.asset_class == AssetClass.EQUITY])
-                    desk = PaperDesk(store, broker, data, policy, runtime, earnings=earnings)
+                    from .awareness import SituationBuilder
+                    desk = PaperDesk(store, broker, data, policy, runtime, earnings=earnings,
+                                     situation=SituationBuilder(store))
                     while True:
                         result = desk.run_once()
                         print(json.dumps(result, indent=2))
@@ -226,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
         when = lambda text: datetime.fromisoformat(text).replace(tzinfo=timezone.utc)  # noqa: E731
         spec = BacktestSpec(tuple(args.strategy), assets, args.dataset, args.timeframe, when(args.start),
                             when(args.end), split=args.split, initial_cash=args.cash, order_notional=args.notional,
-                            seed=args.seed)
+                            seed=args.seed, sizing=args.sizing, volatility_model=args.volatility_model)
         record = evaluate(home, spec)
         print(json.dumps({k: record[k] for k in ("seq", "fingerprint", "status", "metrics", "trades", "turnover",
                                                  "average_exposure", "benchmarks", "gate")}, indent=2, default=str))
@@ -257,7 +268,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report["passed"] else 2
     elif args.command == "macro-update":
         with LocalStorage(_home(args)) as store:
-            print(json.dumps(update_macro(store), indent=2))
+            print(json.dumps(update_macro(store, series=SERIES + PRICE_SERIES), indent=2))
+    elif args.command == "model-study":
+        from .studies import run_study
+        if args.source == "bars" and not args.universe:
+            print(json.dumps({"result": "BLOCKED", "reason": "--universe is required with --source bars"}))
+            return 2
+        record = run_study(_home(args), args.kind, source=args.source, split=args.split,
+                           universe=Path(args.universe) if args.universe else None)
+        print(json.dumps({k: record[k] for k in ("seq", "fingerprint", "status", "spec", "result")}, indent=2, default=str))
+    elif args.command == "cost-report":
+        from .costs import compare as compare_costs, realised_costs
+        with LocalStorage(_home(args), writer=False) as store:
+            rows = realised_costs(store)
+        print(json.dumps({"fills": len(rows), "comparison": compare_costs(rows)}, indent=2, default=str))
     elif args.command == "backfill":
         key, secret = os.environ.get("ALPACA_PAPER_KEY_ID"), os.environ.get("ALPACA_PAPER_SECRET_KEY")
         if not key or not secret:
@@ -294,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
                     result = check_bars(store.load_bars(asset.symbol, asset.asset_class, dataset=name), expected_step=step)
                     rows.append({"asset": asset.symbol, "dataset": name, "rows": result["rows"],
                                  "first": result.get("first"), "last": result.get("last"), "issues": result["counts"]})
-            for series in SERIES:
+            for series in SERIES + PRICE_SERIES:
                 rows.append({"asset": series.series_id, "dataset": "FRED", "rows": len(store.read_table("macro", series.series_id))})
         print(json.dumps(rows, indent=2))
     elif args.command == "review":

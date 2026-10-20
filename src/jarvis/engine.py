@@ -127,7 +127,7 @@ class TradingEngine:
                 quantity: float = 1, quote_at: datetime | None = None,
                 feature_horizon: timedelta = timedelta(hours=1),
                 persist_features: bool = True, context: DecisionContext | None = None,
-                snapshot: FeatureSnapshot | None = None) -> list[dict[str, Any]]:
+                snapshot: FeatureSnapshot | None = None, sizing: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         if not self._ready:
             raise BrokerError("reconcile before processing")
         now = as_of or utc_now()
@@ -182,7 +182,8 @@ class TradingEngine:
                                   "strategy_id": intent.strategy_id, "strategy_version": intent.strategy_version,
                                   "model_id": intent.model_id, "model_version": intent.model_version,
                                   "entry_bar_end_at": iso(bars[-1].end_at),
-                                  "exit_after_bars": intent.exit_after_bars})
+                                  "exit_after_bars": intent.exit_after_bars, "spread_bps": spread_bps,
+                                  **(sizing or {})})
             try:
                 order = self.broker.submit(client_id, intent.asset_id, intent.asset_class,
                                            intent.side, risk.allowed_quantity, intent.reference_price)
@@ -223,7 +224,8 @@ class TradingEngine:
         client_id = stable_id("exit", asset_id, entries[-1]["payload"]["client_order_id"] if entries else "no-entry",
                               reason, str(qty))
         self._record("EXIT_INTENT", client_id, asset_id=asset_id,
-                     payload={"client_order_id": client_id, "quantity": qty, "reason": reason})
+                     payload={"client_order_id": client_id, "quantity": qty, "reason": reason, "side": "SELL",
+                              "reference_price": price, "asset_class": getattr(asset_class, "value", asset_class)})
         order = self.broker.find_order(client_id)
         if order is None:
             try:
@@ -237,8 +239,8 @@ class TradingEngine:
                     return "SAFE"
         self._record("EXIT_ORDER", client_id, asset_id=asset_id,
                      payload={"client_order_id": client_id, "broker_order_id": order.broker_order_id,
-                              "side": "SELL",
-                              "status": order.status, "filled_quantity": order.filled_quantity})
+                              "side": "SELL", "status": order.status, "filled_quantity": order.filled_quantity,
+                              "average_price": order.average_price})
         already_recorded = client_id in index.outcome_ids
         if order.status == "FILLED" and order.average_price is not None and not already_recorded:
             by_client = index.buy_orders_by_asset.get(asset_id, {})

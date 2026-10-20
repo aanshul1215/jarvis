@@ -13,8 +13,11 @@ Evidence tags follow the rest of the repository: **FETCHED** (the source was ope
 
 - Long-only, long or flat. One position per asset; the strategy that opened it owns its exit.
 - Decisions on completed bars only; orders fill at the next bar's open (daily stocks: the next session's open).
-- Sizing: a fixed dollar amount per entry (evaluation default $1,000 of $10,000), rounded down to whole shares for
-  stocks. The Governor's limits apply unchanged.
+- Sizing: a base of $1,000 per entry (of $10,000), scaled by the Phase 5 volatility forecast: notional = base ×
+  min(1.5, 1% ÷ forecast daily volatility), rounded down to whole shares for stocks. The Governor's limits apply
+  unchanged. *Amended 2026-10-19, before any real-data run* (originally a fixed dollar amount): the workflow makes
+  the volatility forecast set position size for every strategy. The forecaster is the winner of the pre-registered
+  study in `docs/07-awareness/MODEL_REGISTER.md`; runs use `backtest --sizing volatility --volatility-model <winner>`.
 - Costs: 5 bps per side for stocks; 25 bps fee plus 5 bps spread per side for crypto; every evaluation is repeated
   with costs doubled.
 - Exits: each strategy's own signal, an optional stop-loss measured in ATRs below the entry price, and a maximum

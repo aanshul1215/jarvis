@@ -12,6 +12,7 @@ Deliberately excluded:
 
 from __future__ import annotations
 
+import bisect
 import csv
 import io
 import time
@@ -48,7 +49,20 @@ SERIES = (
     MacroSeries("DTB3", "3-month Treasury bill rate (cash yield)", 1, 22),
     MacroSeries("BAA10Y", "Moody's Baa corporate yield minus 10-year Treasury (credit stress)", 1, 22),
 )
-SERIES_BY_ID = {s.series_id: s for s in SERIES}
+# Daily closing prices with long histories, used only as inputs to the Phase 5 model studies (volatility, regime,
+# correlation), never for orders. They are copyrighted by their providers (S&P Dow Jones Indices, Nasdaq, Coinbase:
+# "reproduction prohibited" on each FRED page, checked 2026-10-19), so they stay in JARVIS_HOME and are never
+# committed. FRED shows only ten years of S&P and Dow Jones history; NASDAQCOM starts in 1971. Coinbase prices are
+# taken at 17:00 Pacific. All are treated as published the next business day.
+PRICE_SERIES = (
+    MacroSeries("NASDAQCOM", "NASDAQ Composite index close", 1, 22),
+    MacroSeries("SP500", "S&P 500 index close (last ten years only)", 1, 22),
+    MacroSeries("DJIA", "Dow Jones Industrial Average close (last ten years only)", 1, 22),
+    MacroSeries("CBBTCUSD", "Coinbase bitcoin price in US dollars (17:00 Pacific)", 1, 22),
+    MacroSeries("CBETHUSD", "Coinbase ether price in US dollars (17:00 Pacific)", 1, 22),
+)
+PRICE_GROUPS = {"NASDAQCOM": "EQUITY", "SP500": "EQUITY", "DJIA": "EQUITY", "CBBTCUSD": "CRYPTO", "CBETHUSD": "CRYPTO"}
+SERIES_BY_ID = {s.series_id: s for s in SERIES + PRICE_SERIES}
 
 
 def available_at(series: MacroSeries, observed: date) -> datetime:
@@ -143,3 +157,25 @@ def load_macro(store: LocalStorage, series_id: str, *, as_of: datetime | None = 
 def latest_value(store: LocalStorage, series_id: str, as_of: datetime) -> float | None:
     rows = load_macro(store, series_id, as_of=as_of)
     return rows[-1]["value"] if rows else None
+
+
+class AsOfSeries:
+    """Value of a revised series as known at a moment: the newest observation (latest revision) published by then."""
+
+    def __init__(self, rows: list[dict]):
+        ordered = sorted(rows, key=lambda r: (parse_utc(r["available_at"]), r["observation_date"], r["revision"]))
+        self.times = [parse_utc(r["available_at"]) for r in ordered]
+        self.best, best = [], None
+        for row in ordered:  # running "newest observation, latest revision" over everything published so far
+            key = (row["observation_date"], row["revision"])
+            if best is None or key >= (best["observation_date"], best["revision"]):
+                best = row
+            self.best.append(best)
+
+    def at(self, moment: datetime) -> float | None:
+        i = bisect.bisect_right(self.times, moment) - 1
+        return float(self.best[i]["value"]) if i >= 0 else None
+
+
+def as_of_series(store: LocalStorage, series_id: str) -> AsOfSeries:
+    return AsOfSeries(store.read_table("macro", series_id))

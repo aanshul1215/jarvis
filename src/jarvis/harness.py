@@ -32,6 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .awareness import SituationBuilder
 from .config import PaperAsset, PaperRuntime
 from .edgar import EarningsCalendar
 from .contracts import AssetClass, iso, utc_now
@@ -60,12 +61,14 @@ class BacktestSpec:
     order_notional: float = 1_000.0
     costs: CostModel = field(default_factory=CostModel)
     seed: int = 0
+    sizing: str = "fixed"              # "volatility": order size scaled by the Phase 5 forecast (daily bars only)
+    volatility_model: str = "rolling20"
 
     def fingerprint(self) -> str:
         """Identifies the strategy configuration (not the period), for trial counting and the holdout rule."""
         key = {"strategies": sorted(self.strategy_versions), "assets": sorted(a for a, _ in self.assets),
                "dataset": self.dataset, "timeframe": self.timeframe, "order_notional": self.order_notional,
-               "seed": self.seed}
+               "seed": self.seed, "sizing": self.sizing, "volatility_model": self.volatility_model}
         return _hash(_canonical(key))[:20]
 
 
@@ -84,14 +87,15 @@ def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=Repla
     data = data_cls(data_store, spec.assets, spec.dataset, clock, spec.costs)
     broker = ReplayBroker(clock, data, spec.costs, cash=spec.initial_cash)
     runtime = PaperRuntime(tuple(PaperAsset(s, c, spec.order_notional) for s, c in spec.assets),
-                           spec.strategy_versions, 60, spec.timeframe)
+                           spec.strategy_versions, 60, spec.timeframe, spec.sizing, spec.volatility_model)
     points, exposure, stopped = [], [], None
     with tempfile.TemporaryDirectory(prefix="jarvis-replay-") as work:
         with LocalStorage(Path(work) / "journal", durable=False, cache_events=False) as journal:
             desk = PaperDesk(journal, broker, data, _policy(spec), runtime, clock=clock,
                              specs=specs if specs is not None else all_specs(),
                              seed=spec.seed, persist_market_data=False,
-                             earnings=EarningsCalendar(data_store, [s for s, c in spec.assets if c == AssetClass.EQUITY]))
+                             earnings=EarningsCalendar(data_store, [s for s, c in spec.assets if c == AssetClass.EQUITY]),
+                             situation=SituationBuilder(data_store))
             for moment in data.schedule(spec.start, spec.end):
                 clock.now = moment
                 broker.step()
@@ -312,7 +316,8 @@ def _spec_record(spec: BacktestSpec) -> dict:
     return {"strategy_versions": list(spec.strategy_versions), "assets": [a for a, _ in spec.assets],
             "dataset": spec.dataset, "timeframe": spec.timeframe, "start": iso(spec.start), "end": iso(spec.end),
             "split": spec.split, "initial_cash": spec.initial_cash, "order_notional": spec.order_notional,
-            "costs": spec.costs.as_dict(), "seed": spec.seed}
+            "costs": spec.costs.as_dict(), "seed": spec.seed, "sizing": spec.sizing,
+            "volatility_model": spec.volatility_model}
 
 
 def evaluate(data_home: Path, spec: BacktestSpec, *, data_cls=ReplayData, specs=None) -> dict:

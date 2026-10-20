@@ -44,3 +44,31 @@ def test_equity_crypto_read_only_data_boundary():
         assert diagnostics["attribution"] == "API_REQUEST_DURATION_ONLY"
         quote = data.latest_quote(symbol, cls)
         assert quote.spread_bps > 0 and quote.latency_ms >= 0
+
+
+class LongHistoryClient(FakeDataClient):
+    """Returns 1,200 hourly bars oldest first, as Alpaca does, and records whether a request limit was sent."""
+
+    def __init__(self, symbol):
+        super().__init__(symbol)
+        self.limits = []
+
+    def _bars(self):
+        now = utc_now()
+        return SimpleNamespace(data={self.symbol: [SimpleNamespace(timestamp=now - timedelta(hours=1201 - i),
+                                                                   open=100 + i, high=101 + i, low=99 + i, close=100 + i, volume=1000)
+                                                   for i in range(1200)]})
+
+    def get_stock_bars(self, request):
+        self.limits.append(request.limit)
+        return self._bars()
+
+
+def test_long_history_keeps_the_newest_bars_not_the_oldest():
+    data = AlpacaMarketData.__new__(AlpacaMarketData)
+    data.stock_feed = DataFeed.IEX
+    data.stock = data.crypto = LongHistoryClient("AAPL")
+    now = utc_now()
+    bars, _ = data.recent_bars("AAPL", AssetClass.EQUITY, start=now - timedelta(days=60), end=now, limit=1060)
+    assert len(bars) == 1060 and bars[-1].close == 100 + 1199   # newest bar kept
+    assert data.stock.limits == [None]                           # whole window requested, then trimmed
