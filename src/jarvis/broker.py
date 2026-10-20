@@ -57,6 +57,8 @@ class BrokerAdapter(ABC):
 
 
 class MockBroker(BrokerAdapter):
+    evidence_class = "MOCK"
+
     def __init__(self, *, cash: float = 1000.0, fill_fraction: float = 1.0):
         if not 0 <= fill_fraction <= 1:
             raise ValueError("fill_fraction outside 0..1")
@@ -121,6 +123,8 @@ class MockBroker(BrokerAdapter):
 
 class AlpacaPaperBroker(BrokerAdapter):
     """Official SDK wrapper. No live URL or live mode parameter is exposed."""
+
+    evidence_class = "PAPER"
 
     def __init__(self, key_id: str, secret: str, *, enable_orders: bool = False):
         if not key_id or not secret:

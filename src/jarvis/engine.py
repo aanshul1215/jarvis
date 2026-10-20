@@ -20,6 +20,8 @@ from .strategies import StrategyRegistry, select_intent
 # Shortfalls up to this fraction of the quantity bought are recorded as fee adjustments instead of SAFE.
 CRYPTO_FEE_TOLERANCE = 0.004
 EQUITY_HIGH_WATER = "equity-high-water"
+# Simulated brokers allowed to execute in SHADOW mode (mock, soak and replay); never a real broker adapter.
+MOCK_BROKERS = ("MockBroker", "SimBroker", "ReplayBroker")
 # Quantities are sent with at most this many decimals, rounded down so a sell never exceeds the position.
 QUANTITY_DECIMALS = 8
 # A leftover position worth less than this (for example fee dust after a crypto exit) is treated as flat.
@@ -44,20 +46,9 @@ class TradingEngine:
 
     def reconcile(self) -> None:
         """Broker truth is checked before new risk after each process start."""
-        events = self.store.read_events()
-        intents = {e["event"]["payload"].get("client_order_id") for e in events
-                   if e["event"]["event_type"] in ("ORDER_INTENT", "EXIT_INTENT")}
-        latest: dict[str, dict[str, Any]] = {}
-        for item in events:
-            event = item["event"]
-            if event["event_type"] in ("BROKER_ORDER", "ORDER_UPDATE", "EXIT_ORDER"):
-                client_id = event["payload"].get("client_order_id")
-                if client_id:
-                    latest[client_id] = event
-        for client_id in intents:
-            if not client_id:
-                continue
-            previous = latest.get(client_id)
+        index = self.store.index
+        for client_id in list(index.intents):
+            previous = index.latest_order.get(client_id)
             if previous and previous["payload"].get("status") in ("FILLED", "CANCELED", "REJECTED", "EXPIRED"):
                 continue
             order = self.broker.find_order(client_id)
@@ -74,22 +65,13 @@ class TradingEngine:
         if not state.reconciled:
             self.mode = Mode.SAFE
             raise BrokerError("broker unreconciled")
-        all_events = self.store.read_events()
-        known_ids = {e["event"]["payload"].get("client_order_id") for e in all_events
-                     if e["event"]["event_type"] in ("ORDER_INTENT", "EXIT_INTENT", "BROKER_ORDER", "ORDER_UPDATE", "EXIT_ORDER")}
-        if any(client_id not in known_ids for client_id in state.open_order_ids):
+        if any(client_id not in index.intents and client_id not in index.latest_order
+               for client_id in state.open_order_ids):
             self.mode = Mode.SAFE
             raise BrokerError("unknown broker order; SAFE")
-        latest = {}
-        for item in all_events:
-            event = item["event"]
-            if event["event_type"] in ("BROKER_ORDER", "ORDER_UPDATE", "EXIT_ORDER"):
-                client_id = event["payload"].get("client_order_id")
-                if client_id:
-                    latest[client_id] = event
         expected: dict[str, float] = {}
         bought: dict[str, float] = {}
-        for event in latest.values():
+        for event in index.latest_order.values():
             asset = event.get("asset_id")
             side = event["payload"].get("side", "BUY")
             filled = float(event["payload"].get("filled_quantity", 0))
@@ -97,18 +79,13 @@ class TradingEngine:
                 expected[asset] = expected.get(asset, 0) + (filled if side == "BUY" else -filled)
                 if side == "BUY":
                     bought[asset] = bought.get(asset, 0) + filled
-        crypto_assets: set[str] = set()
-        for item in all_events:
-            event = item["event"]
-            if event["event_type"] == "POSITION_ADJUSTMENT" and event.get("asset_id"):
-                expected[event["asset_id"]] = expected.get(event["asset_id"], 0) + float(event["payload"]["delta"])
-            elif event["event_type"] == "ORDER_INTENT" and event["payload"].get("asset_class") == AssetClass.CRYPTO.value:
-                crypto_assets.add(event.get("asset_id"))
+        for asset, delta in index.adjustments.items():
+            expected[asset] = expected.get(asset, 0) + delta
         for asset in sorted(set(expected) | set(state.positions)):
             difference = state.positions.get(asset, 0) - expected.get(asset, 0)
             if abs(difference) <= 1e-7:
                 continue
-            is_crypto = asset in crypto_assets or "/" in asset
+            is_crypto = asset in index.crypto_assets or "/" in asset
             if is_crypto and difference < 0 and -difference <= bought.get(asset, 0) * CRYPTO_FEE_TOLERANCE + 1e-9:
                 self._record("POSITION_ADJUSTMENT", new_id("fee"), asset_id=asset,
                              payload={"delta": difference, "reason": "CRYPTO_FEE_IN_RECEIVED_ASSET",
@@ -172,10 +149,9 @@ class TradingEngine:
                 results.append({"candidate": candidate.candidate_id, "result": "FLAT"})
                 continue
             client_id = stable_id("jarvis", intent.intent_id)
-            existing = {e["event"]["payload"].get("client_order_id") for e in self.store.read_events()
-                        if e["event"]["event_type"] == "ORDER_INTENT"}
             risk = self.governor.assess(intent, self._risk_state(), self.mode, now, quote_at or bars[-1].available_at,
-                                         spread_bps, client_id, existing, mock=self.broker.__class__.__name__ == "MockBroker")
+                                         spread_bps, client_id, self.store.index.entry_ids,
+                                         mock=self.broker.__class__.__name__ in MOCK_BROKERS)
             self._record("RISK_DECISION", candidate.candidate_id, asset_id=candidate.asset_id,
                          payload={"intent_id": intent.intent_id, "result": risk.result,
                                   "policy_version": risk.policy_version}, reason_codes=risk.reason_codes)
@@ -227,9 +203,10 @@ class TradingEngine:
         qty = sellable_quantity(position)
         # The exit ID is tied to the entry it closes. An ID built from asset, reason and quantity alone repeats on
         # the next identical trade, so the old filled exit was found and no new sell was ever placed.
-        entries = [item["event"]["payload"].get("client_order_id") for item in self.store.read_events()
-                   if item["event"]["event_type"] == "ORDER_INTENT" and item["event"].get("asset_id") == asset_id]
-        client_id = stable_id("exit", asset_id, entries[-1] if entries else "no-entry", reason, str(qty))
+        index = self.store.index
+        entries = index.entries_by_asset.get(asset_id, [])
+        client_id = stable_id("exit", asset_id, entries[-1]["payload"]["client_order_id"] if entries else "no-entry",
+                              reason, str(qty))
         self._record("EXIT_INTENT", client_id, asset_id=asset_id,
                      payload={"client_order_id": client_id, "quantity": qty, "reason": reason})
         order = self.broker.find_order(client_id)
@@ -247,22 +224,16 @@ class TradingEngine:
                      payload={"client_order_id": client_id, "broker_order_id": order.broker_order_id,
                               "side": "SELL",
                               "status": order.status, "filled_quantity": order.filled_quantity})
-        already_recorded = any(item["event"]["event_type"] == "TRADE_OUTCOME"
-                               and item["event"]["correlation_id"] == client_id
-                               for item in self.store.read_events())
+        already_recorded = client_id in index.outcome_ids
         if order.status == "FILLED" and order.average_price is not None and not already_recorded:
-            by_client = {}
-            for item in self.store.read_events():
-                event = item["event"]
-                if event["event_type"] in ("BROKER_ORDER", "ORDER_UPDATE") and event.get("asset_id") == asset_id:
-                    by_client[event["payload"].get("client_order_id")] = event
-            entries = [event for event in by_client.values()
+            by_client = index.buy_orders_by_asset.get(asset_id, {})
+            fills = [event for event in by_client.values()
                        # A partially filled entry whose remainder was cancelled or expired still opened the position.
                        if event["payload"].get("side") == "BUY"
                        and float(event["payload"].get("filled_quantity") or 0) > 0]
             costs = []
             remaining = order.filled_quantity
-            for entry in reversed(entries):
+            for entry in reversed(fills):
                 if remaining <= 0:
                     break
                 if entry["payload"].get("average_price") is None:
@@ -272,10 +243,7 @@ class TradingEngine:
                 remaining -= used
             if costs and remaining <= 1e-8:
                 entry_price = sum(q * p for q, p in costs) / sum(q for q, _ in costs)
-                related_intents = [item["event"] for item in self.store.read_events()
-                                   if item["event"]["event_type"] == "ORDER_INTENT"
-                                   and item["event"].get("asset_id") == asset_id]
-                strategy = related_intents[-1]["payload"] if related_intents else {}
+                strategy = entries[-1]["payload"] if entries else {}
                 self._record("TRADE_OUTCOME", client_id, asset_id=asset_id,
                              payload={"entry_price_estimate": entry_price, "exit_price": order.average_price,
                                       "filled_quantity": order.filled_quantity,
@@ -285,7 +253,7 @@ class TradingEngine:
                                       "strategy_version": strategy.get("strategy_version"),
                                       "model_id": strategy.get("model_id"),
                                       "model_version": strategy.get("model_version"),
-                                      "evidence_class": "MOCK" if self.broker.__class__.__name__ == "MockBroker" else "PAPER"})
+                                      "evidence_class": getattr(self.broker, "evidence_class", "PAPER")})
         return order.status
 
     def monitor_positions(self, bars: list[Bar]) -> list[dict[str, Any]]:
@@ -297,9 +265,7 @@ class TradingEngine:
         asset = bars[-1].asset_id
         if is_dust(self.broker.state().positions.get(asset, 0), bars[-1].close):
             return []
-        events = [item["event"] for item in self.store.read_events()]
-        intents = [e for e in events if e["event_type"] == "ORDER_INTENT" and e["asset_id"] == asset]
-        for intent in reversed(intents):
+        for intent in reversed(self.store.index.entries_by_asset.get(asset, [])):
             payload = intent["payload"]
             entry_end = payload.get("entry_bar_end_at")
             limit = payload.get("exit_after_bars")

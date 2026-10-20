@@ -86,7 +86,7 @@ def ingest(store: LocalStorage, document: InformationDocument) -> dict:
                "published_at": iso(document.published_at), "first_available_at": iso(document.first_available_at),
                    "category": document.category, **summarize(document)}
         store.save_information(doc_id, canonical, feature)
-    if not any(row["event"]["event_id"] == doc_id for row in store.read_events()):
+    if not store.has_event(doc_id):
         store.append_event(LedgerEvent(doc_id, "INFO_FEATURE", utc_now(), doc_id,
                                    asset_id=document.asset_id, asset_class=document.asset_class,
                                    source_id=document.source_id, source_event_at=document.published_at,

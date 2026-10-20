@@ -54,8 +54,7 @@ class PaperDesk:
         open_ids = self.broker.state().open_order_ids
         if not open_ids:
             return set()
-        intents = {row["event"]["payload"].get("client_order_id"): row["event"] for row in self.store.read_events()
-                   if row["event"]["event_type"] in ("ORDER_INTENT", "EXIT_INTENT")}
+        intents = self.store.index.intents
         held: set[str] = set()
         for client_id in open_ids:
             intent = intents.get(client_id)

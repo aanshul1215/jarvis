@@ -75,6 +75,47 @@ def _safe_name(value: str) -> str:
     return safe
 
 
+ORDER_EVENTS = ("BROKER_ORDER", "ORDER_UPDATE", "EXIT_ORDER")
+INTENT_EVENTS = ("ORDER_INTENT", "EXIT_INTENT")
+
+
+class JournalIndex:
+    """Projections of the journal that the trading path needs, kept in step with every append.
+
+    Rebuilding these by scanning the whole journal on each decision is O(events) per call, which is fine for a few
+    weeks of live trading but makes multi-year replays unusable.
+    """
+
+    def __init__(self) -> None:
+        self.intents: dict[str, dict[str, Any]] = {}            # client_order_id -> ORDER_INTENT / EXIT_INTENT
+        self.entry_ids: set[str] = set()                         # client_order_ids of ORDER_INTENT events
+        self.entries_by_asset: dict[str, list[dict[str, Any]]] = {}  # ORDER_INTENT events per asset, in order
+        self.latest_order: dict[str, dict[str, Any]] = {}       # client_order_id -> latest order event
+        self.buy_orders_by_asset: dict[str, dict[str, dict[str, Any]]] = {}  # asset -> client id -> latest BROKER_ORDER/ORDER_UPDATE
+        self.adjustments: dict[str, float] = {}                 # asset -> sum of POSITION_ADJUSTMENT deltas
+        self.crypto_assets: set[str] = set()
+        self.outcome_ids: set[str] = set()                      # correlation ids of TRADE_OUTCOME events
+
+    def add(self, event: dict[str, Any]) -> None:
+        kind, payload, asset = event["event_type"], event.get("payload") or {}, event.get("asset_id")
+        client_id = payload.get("client_order_id")
+        if kind in INTENT_EVENTS and client_id:
+            self.intents[client_id] = event
+            if kind == "ORDER_INTENT":
+                self.entry_ids.add(client_id)
+                self.entries_by_asset.setdefault(asset, []).append(event)
+                if payload.get("asset_class") == AssetClass.CRYPTO.value:
+                    self.crypto_assets.add(asset)
+        elif kind in ORDER_EVENTS and client_id:
+            self.latest_order[client_id] = event
+            if kind != "EXIT_ORDER" and asset:
+                self.buy_orders_by_asset.setdefault(asset, {})[client_id] = event
+        elif kind == "POSITION_ADJUSTMENT" and asset:
+            self.adjustments[asset] = self.adjustments.get(asset, 0.0) + float(payload["delta"])
+        elif kind == "TRADE_OUTCOME":
+            self.outcome_ids.add(event["correlation_id"])
+
+
 class StorageAdapter(ABC):
     @abstractmethod
     def append_event(self, event: LedgerEvent) -> str: ...
@@ -111,7 +152,10 @@ class StorageAdapter(ABC):
 class LocalStorage(StorageAdapter):
     """Only the lock holder may append. Open the reader with writer=False."""
 
-    def __init__(self, home: Path, *, writer: bool = True, allow_inside_repo: bool = False):
+    def __init__(self, home: Path, *, writer: bool = True, allow_inside_repo: bool = False,
+                 durable: bool = True, cache_events: bool = True):
+        """``durable=False`` skips the per-event fsync and ``cache_events=False`` keeps only the index in memory;
+        both are for replays and backtests, never for a live or paper desk."""
         self.home = home.expanduser().resolve()
         repo_root = Path(__file__).resolve().parents[2]
         if not allow_inside_repo and (self.home == repo_root or repo_root in self.home.parents):
@@ -121,9 +165,15 @@ class LocalStorage(StorageAdapter):
         self.journal.parent.mkdir(parents=True, exist_ok=True)
         self._lock_file = None
         self._writer = writer
+        self.durable, self.cache_events = durable, cache_events
+        self._append_stream = None
         if writer:
             self._acquire_lock()
-        self._seq, self._prev_hash, self._event_ids, self._events = self._verify_and_recover()
+        self._seq, self._prev_hash, self._event_ids, events = self._verify_and_recover()
+        self.index = JournalIndex()
+        for item in events:
+            self.index.add(item["event"])
+        self._events = events if cache_events else []
 
     def _acquire_lock(self) -> None:
         lock_path = self.home / "journal" / "writer.lock"
@@ -146,6 +196,11 @@ class LocalStorage(StorageAdapter):
             raise StorageError("another journal writer is active") from exc
 
     def close(self) -> None:
+        if self._append_stream is not None:
+            self._append_stream.flush()
+            os.fsync(self._append_stream.fileno())
+            self._append_stream.close()
+            self._append_stream = None
         if self._lock_file is not None:
             if os.name == "nt":
                 import msvcrt
@@ -211,15 +266,26 @@ class LocalStorage(StorageAdapter):
         item = {"schema_version": 1, "seq": self._seq + 1, "prev_hash": self._prev_hash, "event": event.to_dict()}
         digest = _hash(self._prev_hash.encode() + _canonical(item))
         line = _canonical({**item, "hash": digest}) + b"\n"
-        with open(self.journal, "ab") as stream:
-            stream.write(line)
-            stream.flush()
-            os.fsync(stream.fileno())
+        if self.durable:
+            with open(self.journal, "ab") as stream:
+                stream.write(line)
+                stream.flush()
+                os.fsync(stream.fileno())
+        else:
+            if self._append_stream is None:
+                self._append_stream = open(self.journal, "ab")
+            self._append_stream.write(line)
         self._seq += 1
         self._prev_hash = digest
         self._event_ids.add(event.event_id)
-        self._events.append(json.loads(line))
+        record = json.loads(line)
+        self.index.add(record["event"])
+        if self.cache_events:
+            self._events.append(record)
         return event.event_id
+
+    def has_event(self, event_id: str) -> bool:
+        return event_id in self._event_ids
 
     def read_events(self) -> list[dict[str, Any]]:
         """Verified journal records in order.
@@ -227,8 +293,10 @@ class LocalStorage(StorageAdapter):
         The lock-holding writer serves an in-memory copy kept in step with every append, instead of re-parsing
         the whole file on each call; a reader re-verifies the file each time.
         """
-        if self._writer:
+        if self._writer and self.cache_events:
             return list(self._events)
+        if self._append_stream is not None:
+            self._append_stream.flush()
         return self._verify_and_recover()[3]
 
     def publish_json(self, name: str, document: dict[str, Any]) -> str:
