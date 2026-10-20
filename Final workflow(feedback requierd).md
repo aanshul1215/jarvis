@@ -1,6 +1,6 @@
 # JARVIS — Final workflow (feedback required)
 
-**Status:** proposed, 2026-10-19. Not yet approved. Comments and suggested changes are welcome — see [Feedback](#feedback) at the end.
+**Status:** proposed, 2026-10-19 (situational-awareness section added 2026-10-19). Not yet approved. Comments and suggested changes are welcome — see [Feedback](#feedback) at the end.
 
 ## Goal
 
@@ -55,6 +55,9 @@ Durations are rough planning estimates for part-time work, not commitments. Each
 
 - **Prices:** backfill history for 20–30 liquid stocks/ETFs plus BTC and ETH (Alpaca; stocks back to about 2016 on the free plan). Keep raw and split/dividend-adjusted versions.
 - **Financial data:** company fundamentals and filing dates from SEC EDGAR; macro series from FRED.
+- **Situational-awareness inputs** (see Phase 5): market-stress and rate series from FRED; daily bars for a broader
+  breadth universe (for example S&P 500 members); the exchange trading calendar; the Fed meeting and economic-release
+  calendars. Collect these from the start so they cover the full backtest period.
 - **Start the social and news collectors now** — Reddit (after checking its API terms), crypto social sources, news if available — storing every item with its first-seen time. Sentiment can only be tested on data we have archived ourselves, so every week of delay is a week of history lost.
 - Data-quality checks: missing bars, spikes, duplicates.
 
@@ -95,6 +98,26 @@ Six to eight genuinely different base strategies, each written down before it is
 | Transaction-cost model | Fixed cost assumption |
 
 **Exit test:** each model beats its baseline on unseen data, or it is dropped. The volatility forecast then sets position size for every strategy.
+
+#### Situational awareness: the full picture
+
+The models above summarise the market. Situational awareness also needs the raw signals below, computed point-in-time
+(only what was known at the decision moment) and fed to the regime detector, the risk gate and the strategy selector.
+
+| Area | Signals | Free source (to verify in Phase 0/2) | Why it matters |
+|---|---|---|---|
+| Market-wide stress | VIX level and change; high-yield credit spread; 10-year and 2-year Treasury yields and their gap | FRED (`VIXCLS`, `BAMLH0A0HYM2`, `DGS10`, `DGS2`, `T10Y2Y`); check history length and terms for the ICE BofA series | Separates calm, nervous and crisis markets; most strategies behave differently in each |
+| Market breadth | Share of stocks above their 200-day average; advancing vs declining stocks; new highs vs new lows | Computed from Alpaca daily bars over a broad universe | A rally on narrow breadth behaves differently from a broad one |
+| Scheduled events | Earnings dates; Fed (FOMC) meetings; CPI and jobs releases | EDGAR filing history (past earnings); Federal Reserve and BLS published calendars; a free forward earnings calendar is still an open question | Volatility and risk jump around events; strategies may stand aside or size down |
+| Liquidity | Spread and volume relative to normal, by time of day | Alpaca quotes and bars (IEX-only for stocks on the free plan) | Wide spreads and thin volume turn a good signal into a losing trade |
+| Calendar | Time of day, day of week, holidays and half-days, crypto weekends | Alpaca market calendar | Opening and closing hours, holidays and weekend crypto have different behaviour |
+| Crypto-specific | BTC vs ETH relative move; crypto–equity correlation; weekend flag | Alpaca crypto bars | Crypto regimes and stock regimes are linked but not the same |
+| Cross-asset | Rolling correlations between holdings and with the broad market | Computed from stored bars | Several positions can secretly be one bet |
+| The system's own state | Open positions, recent losses, drawdown from peak, correlation of open trades | The journal and broker reconciliation | Awareness includes itself: after losses or crowded positions, risk is cut |
+
+**Test for every signal:** it is added only if it improves a downstream decision (regime labels, risk sizing or
+strategy selection) on unseen data, compared with the same model without it. Signals that do not help are recorded as
+negative results and removed.
 
 ### Phase 6 — Information agents (weeks 8–11)
 
