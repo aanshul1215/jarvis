@@ -14,8 +14,21 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Daily-loss and drawdown limits never evaluated | TESTED LOCALLY (mock + fake client) | `test_daily_loss_limit_blocks_new_risk`, `test_drawdown_from_stored_peak_blocks_new_risk`, `test_alpaca_state_reports_daily_pnl_and_normalises_crypto_symbols` |
 | Crypto fee taken from the received coin broke reconciliation | TESTED WITH MOCK â€” ACCOUNT BEHAVIOUR UNVERIFIED | `test_crypto_fee_shortfall_is_recorded_but_a_real_mismatch_is_still_safe`; confirm fee posting on the first paper fill |
 | Crypto position symbol format (`BTCUSD` vs `BTC/USD`) | DEFENSIVE â€” ACCOUNT FORMAT UNVERIFIED | `test_symbol_normalisation`; confirm in the Phase 0 probe |
-| CI on Windows and Linux | ADDED â€” FIRST RUN PENDING | `.github/workflows/tests.yml` |
-| 24-hour mock paper soak (Phase 1 exit test) | NOT RUN | Next task |
+| CI on Windows and Linux | PASSING | 8/8 checks green on the first run (2026-10-19) |
+| 24-hour mock paper soak (Phase 1 exit test) | PASSED (MOCK) | `jarvis soak --hours 24 --poll-seconds 60 --seed 7`: 1,440/1,440 cycles, never stopped, 0 cycle errors, 0 overdue orders, 14,645 journal events re-verified; 858 s wall time. Seed 7 produced only one trade, so path coverage relies on `tests/test_soak.py` (seed 11: cancel, partial fill, late fill, fee adjustment, bar revisions, session skips). |
+| Defects found by the soak | FIXED | Sell quantity rounded up past the position (now rounded down to 8 decimals; under-$1 leftovers treated as flat); decision time taken before the quote was fetched; no outcome for partially filled entries. |
+
+## Phase 2 data layer â€” 2026-10-19
+
+| Item | Status | Evidence |
+|---|---|---|
+| Multiple datasets per asset (`1Day-raw`, `1Day-adjusted`, `1Hour-raw`, live `bars`) and generic hash-checked tables | TESTED LOCALLY | `tests/test_phase2_data.py` |
+| FRED market-stress series (VIX, 3-month VIX, 10y, 2y, 10y-2y, 3-month bill, Baa credit spread) with publication-time availability and revisions | TESTED LOCALLY + LIVE DOWNLOAD | Live run 2026-10-19: ~84,000 observations, re-run adds 0; point-in-time check on 2020-03-16 returned Friday's VIX close 57.83 and Thursday's 10y yield |
+| Excluded series | DECIDED | High-yield spread (FRED keeps ~3 years only); NFCI and STLFSI4 (revised after publication; need vintages) |
+| Alpaca history back-fill (SIP, raw and adjusted, deterministic availability) | TESTED WITH FAKE CLIENT â€” NEEDS PAPER KEYS | Rebuild from scratch gives byte-identical files; `jarvis backfill` fails closed without keys |
+| Data-quality checks (duplicates, gaps, spikes, stale prices, zero volume) | TESTED LOCALLY | `jarvis data-check` |
+| Proposed starting universe (27 stocks/ETFs + BTC/ETH) | PROPOSED â€” OWNER TO CONFIRM | `config/universe.example.json` |
+| SEC EDGAR filings, event calendars, breadth universe, news/social collectors | NOT STARTED | EDGAR needs a contact for its required User-Agent; collectors need source decisions |
 
 ## Implementation dependency map — 2026-10-18
 

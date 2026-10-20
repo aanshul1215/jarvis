@@ -20,6 +20,9 @@ from .research import backtest_fixture, train_fixture
 from .review import review_outcomes
 from .runner import PaperDesk
 from .simulation import run_soak
+from .history import alpaca_clients, backfill, dataset_name, DATASETS, default_start, load_universe
+from .macro import SERIES, update_macro
+from .quality import check_bars
 from .information import ingest, load_document
 from .risk import Governor, RiskPolicy
 from .storage import LocalStorage
@@ -91,8 +94,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--home", help="JARVIS_HOME outside the Git checkout")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
-                 "soak"):
+                 "soak", "macro-update", "backfill", "data-check"):
         command = commands.add_parser(name)
+        if name in ("backfill", "data-check"):
+            command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
+        if name == "backfill":
+            command.add_argument("--start", default="2016-01-01", help="first date to download (UTC), YYYY-MM-DD")
+            command.add_argument("--timeframes", default="1Day,1Hour", help="comma-separated: 1Day,1Hour")
         if name == "soak":
             command.add_argument("--hours", type=float, default=24, help="simulated hours (default 24)")
             command.add_argument("--poll-seconds", type=int, default=60, help="simulated poll interval")
@@ -211,6 +219,36 @@ def main(argv: list[str] | None = None) -> int:
         report = run_soak(target, hours=args.hours, poll_seconds=args.poll_seconds, seed=args.seed)
         print(json.dumps({**report, "home": str(target)}, indent=2, default=str))
         return 0 if report["passed"] else 2
+    elif args.command == "macro-update":
+        with LocalStorage(_home(args)) as store:
+            print(json.dumps(update_macro(store), indent=2))
+    elif args.command == "backfill":
+        key, secret = os.environ.get("ALPACA_PAPER_KEY_ID"), os.environ.get("ALPACA_PAPER_SECRET_KEY")
+        if not key or not secret:
+            print(json.dumps({"result": "BLOCKED", "reason": "Alpaca market data needs the paper keys in the environment"}))
+            return 2
+        from datetime import datetime, timezone
+        start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
+        stock, crypto = alpaca_clients(key, secret)
+        with LocalStorage(_home(args)) as store:
+            report = backfill(store, stock, crypto, load_universe(Path(args.universe)), start=start,
+                              timeframes=tuple(args.timeframes.split(",")))
+        print(json.dumps(report, indent=2))
+    elif args.command == "data-check":
+        from datetime import timedelta
+        rows = []
+        with LocalStorage(_home(args), writer=False) as store:
+            for asset in load_universe(Path(args.universe)):
+                for timeframe, adjustment in DATASETS[asset.asset_class]:
+                    name = dataset_name(timeframe, adjustment)
+                    step = (timedelta(days=1) if timeframe == "1Day" else timedelta(hours=1)) \
+                        if asset.asset_class == AssetClass.CRYPTO else None
+                    result = check_bars(store.load_bars(asset.symbol, asset.asset_class, dataset=name), expected_step=step)
+                    rows.append({"asset": asset.symbol, "dataset": name, "rows": result["rows"],
+                                 "first": result.get("first"), "last": result.get("last"), "issues": result["counts"]})
+            for series in SERIES:
+                rows.append({"asset": series.series_id, "dataset": "FRED", "rows": len(store.read_table("macro", series.series_id))})
+        print(json.dumps(rows, indent=2))
     elif args.command == "review":
         with LocalStorage(_home(args)) as store:
             print(json.dumps(review_outcomes(store), indent=2))

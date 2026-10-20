@@ -83,11 +83,11 @@ class StorageAdapter(ABC):
     def read_events(self) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    def save_bars(self, bars: Iterable[Bar]) -> Path: ...
+    def save_bars(self, bars: Iterable[Bar], *, dataset: str = "bars") -> Path: ...
 
     @abstractmethod
     def load_bars(self, asset_id: str, asset_class: AssetClass, *, as_of: datetime | None = None,
-                  all_revisions: bool = False) -> list[Bar]: ...
+                  all_revisions: bool = False, dataset: str = "bars") -> list[Bar]: ...
 
     @abstractmethod
     def save_features(self, snapshots: Iterable[FeatureSnapshot]) -> Path: ...
@@ -247,7 +247,7 @@ class LocalStorage(StorageAdapter):
             row[key] = iso(row[key])
         return row
 
-    def save_bars(self, bars: Iterable[Bar]) -> Path:
+    def save_bars(self, bars: Iterable[Bar], *, dataset: str = "bars") -> Path:
         """Merge bars into the asset partition.
 
         An identical re-delivery keeps the first observed availability time. A vendor amendment of an
@@ -261,9 +261,10 @@ class LocalStorage(StorageAdapter):
         first = values[0]
         if any(b.asset_id != first.asset_id or b.asset_class != first.asset_class for b in values):
             raise ValueError("partition may contain one asset only")
-        path = self.home / "market" / first.asset_class.value.lower() / _safe_name(first.asset_id) / "bars.parquet"
+        path = self._bars_path(first.asset_id, first.asset_class, dataset)
         path.parent.mkdir(parents=True, exist_ok=True)
-        existing = self.load_bars(first.asset_id, first.asset_class, all_revisions=True) if path.exists() else []
+        existing = self.load_bars(first.asset_id, first.asset_class, all_revisions=True,
+                                  dataset=dataset) if path.exists() else []
         stored = {(b.end_at, b.source_id, b.revision): b for b in existing}
         latest: dict[tuple[datetime, str], Bar] = {}
         for bar in existing:
@@ -296,10 +297,14 @@ class LocalStorage(StorageAdapter):
                 os.unlink(tmp)
         return path
 
+    def _bars_path(self, asset_id: str, asset_class: AssetClass, dataset: str) -> Path:
+        """One Parquet file per asset and dataset, e.g. ``bars`` (live hourly) or ``1Day-adjusted`` (history)."""
+        return self.home / "market" / asset_class.value.lower() / _safe_name(asset_id) / f"{_safe_name(dataset)}.parquet"
+
     def load_bars(self, asset_id: str, asset_class: AssetClass, *, as_of: datetime | None = None,
-                  all_revisions: bool = False) -> list[Bar]:
+                  all_revisions: bool = False, dataset: str = "bars") -> list[Bar]:
         """Latest revision of each bar (as known at ``as_of`` when given), or every stored revision."""
-        path = self.home / "market" / asset_class.value.lower() / _safe_name(asset_id) / "bars.parquet"
+        path = self._bars_path(asset_id, asset_class, dataset)
         if not path.exists():
             return []
         manifest = json.loads(path.with_suffix(".manifest.json").read_text())
@@ -402,6 +407,42 @@ class LocalStorage(StorageAdapter):
                                 "quality": row["quality"], "values": {}}
             grouped[key]["values"][row["feature_name"]] = row["feature_value"]
         return sorted((FeatureSnapshot(**row) for row in grouped.values()), key=lambda s: s.as_of)
+
+    def _table_path(self, *parts: str) -> Path:
+        if not parts:
+            raise ValueError("table path required")
+        names = [_safe_name(p) for p in parts]
+        return self.home.joinpath(*names[:-1]) / f"{names[-1]}.parquet"
+
+    def write_table(self, *parts: str, rows: list[dict[str, Any]]) -> Path:
+        """Atomically replace a generic Parquet table (with SHA-256 manifest) under JARVIS_HOME."""
+        self._require_writer()
+        if not rows:
+            raise ValueError("refusing to write an empty table")
+        path = self._table_path(*parts)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=".parquet", dir=path.parent)
+        os.close(fd)
+        try:
+            pq.write_table(pa.Table.from_pylist(rows), tmp, compression="zstd")
+            _fsync_path(tmp)
+            os.replace(tmp, path)
+            _sync_dir(path.parent)
+            atomic_bytes(path.with_suffix(".manifest.json"), _canonical({"schema_version": 1,
+                         "sha256": _hash(path.read_bytes()), "rows": len(rows)}) + b"\n")
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        return path
+
+    def read_table(self, *parts: str) -> list[dict[str, Any]]:
+        path = self._table_path(*parts)
+        if not path.exists():
+            return []
+        manifest = json.loads(path.with_suffix(".manifest.json").read_text())
+        if _hash(path.read_bytes()) != manifest["sha256"]:
+            raise StorageError(f"{'/'.join(parts)} Parquet hash mismatch")
+        return pq.read_table(path).to_pylist()
 
     def backup(self, destination: Path) -> Path:
         self._require_writer()

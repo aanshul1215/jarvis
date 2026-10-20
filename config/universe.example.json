@@ -1,0 +1,18 @@
+{
+  "version": "universe-proposal-2026-10-19",
+  "status": "PROPOSED - owner to confirm or edit; copy to JARVIS_HOME/config/universe.json",
+  "equities": [
+    "SPY", "QQQ", "IWM", "DIA",
+    "TLT", "IEF", "HYG", "LQD", "GLD",
+    "XLF", "XLK", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU",
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM", "XOM", "UNH"
+  ],
+  "crypto": ["BTC/USD", "ETH/USD"],
+  "notes": [
+    "Broad index ETFs (SPY, QQQ, IWM, DIA) give the market and size/style context.",
+    "TLT, IEF, HYG, LQD and GLD cover rates, credit and gold; HYG and LQD versus IEF also measure credit stress from 2016 onward.",
+    "The nine sector ETFs feed sector-relative strength and breadth across sectors.",
+    "Ten large, liquid single stocks keep spreads small; this list is survivorship-biased (chosen today), so single-stock results must be read with that caveat.",
+    "BTC/USD and ETH/USD are data-only until crypto trading eligibility in Texas is confirmed by the paper-account probe."
+  ]
+}
