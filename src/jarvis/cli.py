@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
-                 "cost-report", "selector-study", "collect"):
+                 "cost-report", "selector-study", "collect", "score-news"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -327,6 +327,13 @@ def main(argv: list[str] | None = None) -> int:
                 report["feargreed"] = collectors.collect_fear_greed(store, history=args.history)
             collectors.record_collection(store, report)
         print(json.dumps(report, indent=2, default=str))
+    elif args.command == "score-news":
+        from .sentiment import FinbertScorer, score_archive
+        home = _home(args)
+        scorer = FinbertScorer(cache_dir=Path(os.environ["HF_HOME"]) if os.environ.get("HF_HOME") else None)
+        with LocalStorage(home) as store:
+            report = score_archive(store, "alpaca_news", scorer)
+        print(json.dumps(report, indent=2))
     elif args.command == "selector-study":
         from datetime import datetime, timezone
         from .harness import BacktestSpec
