@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from .awareness import SituationBuilder
+from .sentiment import SentimentIndex
 from .config import PaperAsset, PaperRuntime
 from .edgar import EarningsCalendar
 from .contracts import AssetClass, iso, utc_now
@@ -128,7 +129,8 @@ def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=Repla
                              specs=specs if specs is not None else all_specs(),
                              seed=spec.seed, persist_market_data=False,
                              earnings=EarningsCalendar(data_store, [s for s, c in spec.assets if c == AssetClass.EQUITY]),
-                             situation=SituationBuilder(data_store))
+                             situation=SituationBuilder(data_store),
+                             information=SentimentIndex(data_store) or None)
             desk.engine.allocation, desk.engine.entry_filter = allocation, entry_filter
             for moment in data.schedule(spec.start, spec.end):
                 clock.now = moment

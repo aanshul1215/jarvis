@@ -201,8 +201,9 @@ def main(argv: list[str] | None = None) -> int:
                     from .edgar import EarningsCalendar
                     earnings = EarningsCalendar(store, [a.symbol for a in runtime.assets if a.asset_class == AssetClass.EQUITY])
                     from .awareness import SituationBuilder
+                    from .sentiment import SentimentIndex
                     desk = PaperDesk(store, broker, data, policy, runtime, earnings=earnings,
-                                     situation=SituationBuilder(store))
+                                     situation=SituationBuilder(store), information=SentimentIndex(store) or None)
                     while True:
                         result = desk.run_once()
                         print(json.dumps(result, indent=2))

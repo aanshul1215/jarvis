@@ -27,6 +27,7 @@ class DecisionContext:
     snapshots: dict[str, FeatureSnapshot] = field(default_factory=dict)  # every asset processed this cycle
     earnings: Callable[[str, datetime], list[dict]] | None = None        # releases known at a time
     situation: dict | None = None                                         # awareness.SituationBuilder output
+    information: Callable[[str, datetime], dict] | None = None            # sentiment.SentimentIndex (point in time)
 
     def rank(self, asset_id: str, feature: str) -> tuple[int, int] | None:
         """(rank, count) of ``asset_id`` by ``feature`` among same-class assets, 1 = highest."""
@@ -164,6 +165,31 @@ class PostEarningsDrift(Strategy):
         return float(v["return_1"])
 
 
+class NewsSentiment(Strategy):
+    """Unusually positive news: the last 24 hours of headlines score at least 2 standard errors above the asset's
+    own previous 60 days, from at least 3 headlines; hold up to 5 bars; leave early if the news turns as negative."""
+
+    stop_loss_atr = 2.0
+    min_headlines, entry_z, exit_z = 3, 2.0, -2.0
+
+    def _news(self, snapshot, context):
+        if context is None or context.information is None:
+            return None
+        return context.information(snapshot.asset_id, context.now)
+
+    def entry_score(self, snapshot, context=None):
+        news = self._news(snapshot, context)
+        if not news or news["news_count_24h"] < self.min_headlines or news["news_sentiment_z"] is None:
+            return None
+        return float(news["news_sentiment_z"]) if news["news_sentiment_z"] >= self.entry_z else None
+
+    def exit_reason(self, snapshot, position, context=None):
+        news = self._news(snapshot, context)
+        if news and news["news_sentiment_z"] is not None and news["news_sentiment_z"] <= self.exit_z:
+            return "SENTIMENT_TURNED"
+        return None
+
+
 class RandomEntry(Strategy):
     """Research control: enters on a seeded coin flip. Any evaluation gate must reject it.
 
@@ -186,7 +212,7 @@ class RandomEntry(Strategy):
 IMPLEMENTATIONS: dict[str, type[Strategy]] = {
     "breakout-volume": BreakoutVolume, "trend-sma200": TrendSma200, "meanrev-rsi2": MeanReversionRsi2,
     "volatility-breakout": VolatilityBreakout, "relative-strength": RelativeStrength,
-    "earnings-drift": PostEarningsDrift, "random-entry": RandomEntry}
+    "earnings-drift": PostEarningsDrift, "news-sentiment": NewsSentiment, "random-entry": RandomEntry}
 
 EQ, CR = AssetClass.EQUITY, AssetClass.CRYPTO
 
@@ -215,13 +241,19 @@ def library_specs() -> list[StrategySpec]:
     ]
 
 
+def sentiment_specs() -> list[StrategySpec]:
+    """Phase 6 information strategies (pre-registered in STRATEGY_REGISTER.md section 7)."""
+    return [StrategySpec("news-sentiment", "1.0.0", (EQ, CR), (), "NEWS_SENTIMENT", 5, 20, approval="RESEARCH",
+                         model_id="finbert", model_version="0bc2ac10dda6")]
+
+
 def research_specs() -> list[StrategySpec]:
     """Controls used only by the evaluation harness; never approved for paper or live."""
     return [StrategySpec("random-entry", "1.0.0", (EQ, CR), (), "RANDOM_ENTRY", 3, 20, approval="RESEARCH")]
 
 
 def all_specs() -> list[StrategySpec]:
-    return baseline_specs() + library_specs() + research_specs()
+    return baseline_specs() + library_specs() + sentiment_specs() + research_specs()
 
 
 class StrategyRegistry:

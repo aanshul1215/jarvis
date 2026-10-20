@@ -32,7 +32,7 @@ class PaperDesk:
     def __init__(self, store: LocalStorage, broker: BrokerAdapter, data: AlpacaMarketData,
                  policy: RiskPolicy, runtime: PaperRuntime, *, clock: Callable[[], datetime] = utc_now,
                  specs: list[StrategySpec] | None = None, seed: int = 0, persist_market_data: bool = True,
-                 earnings: Callable[[str, datetime], list[dict]] | None = None, situation=None):
+                 earnings: Callable[[str, datetime], list[dict]] | None = None, situation=None, information=None):
         """``specs`` and ``persist_market_data=False`` exist for the evaluation harness; the paper CLI uses the
         defaults (baseline strategies only, bars saved every cycle)."""
         if not policy.owner_approved or not policy.paper_enabled:
@@ -52,6 +52,7 @@ class PaperDesk:
         self.persist_market_data = persist_market_data
         self.earnings = earnings  # earnings releases known at a time, for event strategies
         self.situation = situation  # awareness.SituationBuilder: recorded each cycle when given
+        self.information = information  # sentiment.SentimentIndex for information strategies
         self._vol_cache: dict = {}  # fitted volatility-model parameters, refitted at month starts
         self._regime_cache: dict = {}  # fitted hidden-Markov parameters, the same way
         self._reviewed_outcomes = -1  # outcome count at the last review report
@@ -166,7 +167,7 @@ class PaperDesk:
                         "open_positions": sum(1 for v in values.values() if abs(v) >= DUST_NOTIONAL),
                         "gross_exposure": sum(abs(v) for v in values.values()) / state.equity if state.equity > 0 else None})
                     self._event("SITUATION", "*", "RECORDED", payload=situation)
-                context = DecisionContext(decided_at, snapshots, self.earnings, situation)
+                context = DecisionContext(decided_at, snapshots, self.earnings, situation, self.information)
             except Exception as exc:  # same rule as everywhere in the cycle: an unexpected error stops trading
                 self.engine.mode = Mode.SAFE
                 self._event("CYCLE_ERROR", "*", "SAFE", (type(exc).__name__,))
