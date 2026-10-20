@@ -20,6 +20,7 @@ from .market import features_for
 from .strategies import DecisionContext, StrategyRegistry, baseline_specs
 from .timeframes import settings as timeframe_settings
 from .regime import REGIME_NAMES, live_label
+from .volatility import BASELINE as BASELINE_VOL
 from .volatility import HISTORY_BARS, HISTORY_DAYS, bar_returns, forecast_now, scaled_notional
 
 
@@ -94,8 +95,13 @@ class PaperDesk:
             return {}
         r, dates, closes = bar_returns(bars)
         label = live_label(self.runtime.regime_model, r, dates, closes, cache=self._regime_cache)
-        variance = forecast_now(self.runtime.volatility_model, r, dates, cache=self._vol_cache)             if self.runtime.sizing == "volatility" else None
-        return {"regime": REGIME_NAMES.get(label) if label is not None else None,
+        model = self.runtime.volatility_model
+        variance = forecast_now(model, r, dates, cache=self._vol_cache)
+        if variance is None and model != BASELINE_VOL:
+            # A fitted model needs 1,000 returns before the current month; until then the registered baseline sizes
+            # the order, and the order records which model did (MODEL_REGISTER.md, "Use").
+            model, variance = BASELINE_VOL, forecast_now(BASELINE_VOL, r, dates)
+        return {"regime": REGIME_NAMES.get(label) if label is not None else None, "volatility_model_used": model,
                 "forecast_daily_vol": variance ** 0.5 if variance is not None and variance > 0 else None}
 
     def run_once(self, *, now: datetime | None = None) -> dict:
@@ -198,6 +204,7 @@ class PaperDesk:
                     vol = states[symbol].get("forecast_daily_vol")
                     sizing = {"sizing": self.runtime.sizing, "base_notional": asset.order_notional,
                               "volatility_model": self.runtime.volatility_model, "forecast_daily_vol": vol,
+                              "volatility_model_used": states[symbol].get("volatility_model_used"),
                               "decision_mid": (quote.bid + quote.ask) / 2}
                     if self.runtime.sizing == "volatility":
                         notional = scaled_notional(asset.order_notional, vol)

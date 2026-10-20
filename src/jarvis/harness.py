@@ -25,6 +25,7 @@ import os
 import random
 import subprocess
 import tempfile
+import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -285,15 +286,31 @@ class ExperimentRegistry:
         return any(r["fingerprint"] == fingerprint and r["spec"]["split"] == "HOLDOUT" for r in self.records())
 
     def append(self, record: dict) -> dict:
-        previous = self.records()
-        prev_hash = previous[-1]["hash"] if previous else "0" * 64
-        item = {**record, "seq": len(previous) + 1, "prev_hash": prev_hash}
-        item["hash"] = _hash(prev_hash.encode() + _canonical(item))
-        with open(self.path, "ab") as stream:
-            stream.write(_canonical(item) + b"\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        return item
+        """Append under an exclusive lock file, so two runs finishing together cannot both claim the same sequence
+        number and fork the hash chain. A lock left by a crashed process must be removed by hand."""
+        lock = self.path.with_suffix(".lock")
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                break
+            except FileExistsError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"registry lock {lock} is held; remove it if no evaluation is running")
+                time.sleep(0.05)
+        try:
+            previous = self.records()
+            prev_hash = previous[-1]["hash"] if previous else "0" * 64
+            item = {**record, "seq": len(previous) + 1, "prev_hash": prev_hash}
+            item["hash"] = _hash(prev_hash.encode() + _canonical(item))
+            with open(self.path, "ab") as stream:
+                stream.write(_canonical(item) + b"\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            return item
+        finally:
+            os.close(handle)
+            os.unlink(lock)
 
 
 def _code_version() -> str:

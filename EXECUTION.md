@@ -47,6 +47,20 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Performance | MEASURED | 6-month replay 20.2 s → 0.7 s after removing a per-cycle journal re-read; full evaluation of 2.3 years × 4 stocks (base, doubled costs, benchmarks, 8 poisoning cut-offs) ≈ 20–35 s |
 | Real-data evaluation | BLOCKED — NEEDS ALPACA PAPER KEYS | `jarvis backtest --universe ... --strategy ...` runs once `backfill` has data |
 
+## Phase 5 situational-awareness models — 2026-10-19
+
+| Item | Status | Evidence |
+|---|---|---|
+| Volatility forecasters (rolling-20 baseline, EWMA, HAR, GARCH) with month-start walk-forward refits; live forecast identical to the study | TESTED | Recovers a simulated GARCH process; future-scrambling and live-parity tests for every model |
+| Volatility study on real data (FRED stocks 1975–2023, crypto 2017–2023) | **PASSED — GARCH wins** (development); holdout consistent on all 5 series, significant for stocks only | `docs/07-awareness/MODEL_REGISTER.md` Results |
+| Volatility sets position size (1% daily risk at base, capped at 1.5× and at the owner's per-order limit; baseline used until GARCH has 1,000 returns) | TESTED | Replay sizing test with future-poisoning check |
+| Regime detectors (sma200, trend×vol, filtered HMM) and FRED stress ablation | TESTED; **real-data result negative**: no detector beat "no regime"; stress signal dropped | Register Results; regime labels still recorded |
+| Correlation model (diagonal, sample, Ledoit–Wolf constant correlation) | TESTED; preliminary FRED result: not significant in development (p 0.09), significant in holdout (p 0.005) | The universe study decides; BLOCKED — NEEDS ALPACA KEYS |
+| Transaction-cost model and realised shortfall | BUILT; BLOCKED — NEEDS PAPER FILLS | `cost-report` |
+| Situation snapshot every cycle (stress, breadth, events, crypto, per-asset regime and volatility, desk state) | TESTED | `test_situation_snapshot_combines_stress_breadth_events_and_desk_state` |
+| Independent code review | DONE — 6 definite bugs fixed before any real-data run | LOG 2026-10-19 |
+| Phase 5 exit test ("each model beats its baseline on unseen data, or it is dropped") | Volatility: kept (GARCH). Regime: dropped. Correlation: pending universe data. Costs: pending fills | |
+
 ## Phase 4 strategy library — 2026-10-19
 
 | Item | Status | Evidence |

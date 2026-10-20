@@ -54,6 +54,10 @@ Evidence tags: **FETCHED** (a source was opened on 2026-10-19 by the reference-c
   - notional = base notional × min(1.5, 1% ÷ forecast daily volatility).
   - A position therefore risks about 1% a day at the base size: less for volatile assets, up to 1.5× for calm ones, never above the owner's per-order cap. Quantities are rounded down.
 - If there is no forecast, the entry is blocked rather than guessed.
+- *Added 2026-10-19, after the model study but before any strategy run:* when the winner cannot be fitted yet (it
+  needs 1,000 returns before the current month, about four years, and Alpaca history starts in 2016), the baseline
+  `rolling20` sizes the order instead. Each order records `volatility_model_used`. This does not change any
+  model-study rule or result.
 - Volatility-managed exposure has improved risk-adjusted returns for equity factors:
   - FETCHED: Moreira & Muir (2017), NBER w22208.
   - RECALLED (secondary summaries of Harvey et al. 2018): tail risk and drawdowns fell across asset classes.
@@ -125,6 +129,65 @@ The signals are listed in `src/jarvis/awareness.py`:
 They are recorded so that later phases can test them point-in-time. None of them changes a decision until it passes a test like the stress ablation above.
 - **Known gap:** breadth over 27 assets is thin. The workflow's broader breadth universe (for example S&P 500 members) needs more data, and today's membership lists carry survivorship bias.
 
-## Results
+## Results — `fred` source, study version 1.0.0, code 529c572 (2026-10-19)
 
-Recorded in `JARVIS_HOME/research/model_studies.jsonl`, and summarised below once runs exist. Failures are listed alongside any passes.
+The full records are in `JARVIS_HOME/research/model_studies.jsonl`: development entries 1–3, holdout entries 4–6, one
+hash chain. "Gain" means the baseline's loss minus the candidate's (positive = candidate better), averaged per date
+within a group. *n* is the number of forecast origins.
+
+### Volatility (primary h = 5; threshold 0.0167)
+
+| | Stocks (NASDAQCOM, SP500, DJIA) gain / p | Crypto (BTC, ETH) gain / p | Passed |
+|---|---|---|---|
+| **Development** (1975–2023 / 2017–2023; n = 12,330 / 2,277) | | | |
+| `ewma` | 0.055 / 1.5e-13 | 0.198 / 0.0005 | yes |
+| `har` | 0.001 / 0.49 | 0.250 / 0.0044 | no |
+| `garch` | 0.073 / 1.3e-9 | 0.272 / 0.0010 | **yes, winner** |
+| **Holdout** (2024-01 to 2026-10; n = 697 / 1,018) | | | |
+| `ewma` | 0.049 / 0.045 | 0.125 / 0.0043 | no |
+| `har` | 0.082 / 0.032 | 0.215 / 0.021 | no |
+| `garch` | 0.087 / 0.013 | 0.204 / 0.024 | no (crypto p above 0.0167) |
+
+- **Decision:** `garch`, per the pre-registered rule, which chooses the winner on development data. It sets position size.
+- In the holdout, GARCH had a lower QLIKE than the baseline on **all five** series. That is significant for stocks, but not quite for crypto, on about a third of the development sample.
+- **Gap in this register:** it did not say what a holdout shortfall means. It is recorded here as "consistent in direction, not significant in crypto", not as a pass.
+- **Secondary horizons:**
+  - h = 1: all three candidates passed in development.
+  - h = 21: none passed in development, because crypto p-values were 0.04–0.06.
+- HAR's weakness on stocks probably comes from using squared daily returns in place of intraday realised variance; the original HAR uses intraday data.
+
+### Regime (h = 21; threshold 0.025)
+
+| | Stocks gain / p | Crypto gain / p | Passed |
+|---|---|---|---|
+| **Development** | | | |
+| `trend_vol` vs `sma200` | −0.050 / 1.0 | −0.056 / 0.97 | no |
+| `hmm2` vs `sma200` | 0.038 / 0.011 | 0.010 / 0.36 | no |
+| `hmm2` vs `none` | 0.030 / 0.07 | −0.020 / 0.87 | no |
+| `sma200` vs `none` | −0.008 / 0.70 | −0.030 / 0.93 | no |
+| stress ablation (`trend_vol_stress` vs `trend_vol`) | −0.001 / 0.52 | 0.021 / 0.20 | no |
+| **Holdout**: no candidate and no ablation passed; `sma200` vs `none`: stocks 0.076 / 0.014, crypto −0.055 / 0.99 | | | |
+
+- **Decision:** winner `none`, and the stress signal is **dropped**. This is a negative result: under this test, no detector improved the forecast of the next month's return distribution, in stocks and crypto together.
+- **Likely cause:** each label's mean and variance are estimated from about 1,000 overlapping 21-day targets, which is only about a dozen independent months per label. The estimation noise costs more than the labels add.
+- The regime table nevertheless shows large differences in what followed each regime. Examples:
+  - NASDAQ "down_calm": −9% a year;
+  - NASDAQ "up_calm": +12% a year at 16% volatility.
+- Any redesign (a shorter horizon or a longer estimation window) is a new study version, and a new trial.
+- Labels are still recorded each cycle. Phase 7 tests directly whether choosing strategies by regime beats not choosing.
+
+### Correlation risk (threshold 0.025; preliminary, five closely linked series)
+
+| | Gain over `diagonal` / p (development, 74 periods) | Holdout (32 periods) |
+|---|---|---|
+| `sample` | 0.203 / 0.094 | 0.214 / 0.0054 |
+| `shrunk` | 0.201 / 0.096 | 0.214 / 0.0054 |
+
+- **Decision:** `diagonal` (development did not reach significance). The holdout favours a correlation-aware model, and the gain was about the same size in both periods.
+- The universe `bars` study decides; it is BLOCKED on Alpaca keys.
+- Mean shrinkage intensity: 0.24.
+- Reported only: the long-only minimum-variance portfolio had realised volatility of 19.9% (sample/shrunk) and 21.0% (diagonal), against 37.2% for equal weight (development).
+
+### Transaction costs
+
+BLOCKED: there are no paper fills yet. `cost-report` reports INSUFFICIENT_DATA until 50 fills exist.

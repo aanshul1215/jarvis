@@ -257,15 +257,16 @@ def market(tmp_path_factory):
 def test_volatility_sizing_in_replay_is_point_in_time(market):
     spec = BacktestSpec(("random-entry@1.0.0",), tuple((s, AssetClass.EQUITY) for s in SYMBOLS), "1Day-adjusted",
                         "1Day", datetime(2016, 3, 1, tzinfo=UTC), datetime(2017, 3, 1, tzinfo=UTC),
-                        sizing="volatility", volatility_model="ewma")
+                        sizing="volatility", volatility_model="garch")  # under 1,000 returns: baseline sizes
     with LocalStorage(market, writer=False) as store:
         result = run_backtest(store, spec)
         orders = [c for c in result["candidates"] if c[0] == "ORDER"]
         assert result["fills"] > 0 and orders
-        # Random-walk daily volatility is about 1.3%, so each $1,000 entry is cut to roughly $600-800, less up to one
+        # Random-walk daily volatility is about 1.3%, so a $1,000 entry is usually cut to roughly $550-900 (the noisy
+        # 20-day baseline sizes it here: under 1,000 returns of history GARCH cannot be fitted), less up to one
         # share (~$100) for rounding down to whole shares.
         notionals = [quantity * price for _, _, _, quantity, price in orders]
-        assert all(400 < n < 1000 for n in notionals), notionals[:5]
+        assert all(300 < n <= 1500 for n in notionals), (min(notionals), max(notionals))  # never above the 1.5x cap
         assert len({round(n) for n in notionals}) > 3                     # sizes move with the forecast
         assert future_poisoning_check(store, spec, cutoffs=3)["passed"]
 
@@ -287,3 +288,15 @@ def test_holdout_needs_a_recorded_development_run_and_runs_once(tmp_path):
     assert run_study(home, "risk", split="HOLDOUT")["status"] == "COMPLETED"
     with pytest.raises(PermissionError, match="once"):
         run_study(home, "risk", split="HOLDOUT")
+
+
+def test_registry_appends_from_parallel_threads_keep_one_chain(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from jarvis.studies import StudyRegistry
+    registry = StudyRegistry(tmp_path)
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda i: registry.append({"fingerprint": str(i), "spec": {"split": "DEVELOPMENT"}}), range(40)))
+    rows = registry.records()
+    assert [r["seq"] for r in rows] == list(range(1, 41))
+    assert all(rows[i]["prev_hash"] == rows[i - 1]["hash"] for i in range(1, len(rows)))

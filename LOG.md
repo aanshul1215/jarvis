@@ -121,3 +121,9 @@ Append dated entries with branch, commit, commands actually run, evidence, failu
   6. Cost shortfall was measured from the ask, not the mid. Fixed.
   7. Minor issues fixed as well: hmm2 now has a live path and a parity test; deterministic HMM fits; NaN guard; the holdout requires a recorded development run; stress flags are revision-aware.
 - Also repaired 13 mis-encoded lines in EXECUTION.md, which came from an earlier commit.
+- Real-data studies (FRED source, code 529c572; development, then holdout once):
+  - Volatility: GARCH passes and is the winner. EWMA also passes; HAR fails on stocks. In the holdout, GARCH was better on all five series, but significant only for stocks.
+  - Regime: no detector beats "no regime". The stress signal is dropped. This negative result is recorded.
+  - Correlation: not significant in development, significant in holdout; it waits for the universe data.
+- After the study, a recorded fallback was added: the baseline sizes orders until GARCH has 1,000 returns. It applies to strategy sizing only. Backtest CLI defaults are now `--sizing volatility --volatility-model garch`.
+- The registry append now takes an exclusive lock: parallel study runs could otherwise fork the hash chain. A test was added.

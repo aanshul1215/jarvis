@@ -121,8 +121,10 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--cash", type=float, default=10_000.0)
             command.add_argument("--notional", type=float, default=1_000.0, help="dollars per entry")
             command.add_argument("--seed", type=int, default=0)
-            command.add_argument("--sizing", default="fixed", choices=("fixed", "volatility"))
-            command.add_argument("--volatility-model", default="rolling20", help="Phase 5 study winner")
+            # Pre-registered defaults for strategy evaluation: size by the Phase 5 winner (GARCH, development study
+            # 2026-10-19). --sizing fixed exists for diagnostics; every run is still registered as a trial.
+            command.add_argument("--sizing", default="volatility", choices=("fixed", "volatility"))
+            command.add_argument("--volatility-model", default="garch", help="Phase 5 study winner")
         if name == "model-study":
             command.add_argument("--kind", required=True, choices=("volatility", "regime", "risk"))
             command.add_argument("--source", default="fred", choices=("fred", "bars"),
