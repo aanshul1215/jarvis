@@ -208,7 +208,11 @@ def main(argv: list[str] | None = None) -> int:
                     earnings = EarningsCalendar(store, [a.symbol for a in runtime.assets if a.asset_class == AssetClass.EQUITY])
                     from .awareness import SituationBuilder
                     from .sentiment import SentimentIndex
+                    from .strategies import library_specs, sentiment_specs
+                    # Every registered strategy can be loaded; only the exact versions named in the owner's runtime
+                    # file (and allowed by the owner policy) are promoted to PAPER. The random control is never loaded.
                     desk = PaperDesk(store, broker, data, policy, runtime, earnings=earnings,
+                                     specs=baseline_specs() + library_specs() + sentiment_specs(),
                                      situation=SituationBuilder(store), information=SentimentIndex(store) or None)
                     while True:
                         result = desk.run_once()
@@ -372,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "score-news":
         from .sentiment import FinbertScorer, score_archive
         home = _home(args)
-        scorer = FinbertScorer(cache_dir=Path(os.environ["HF_HOME"]) if os.environ.get("HF_HOME") else None)
+        scorer = FinbertScorer()  # model files come from the standard Hugging Face cache (set HF_HOME to move it)
         with LocalStorage(home) as store:
             report = score_archive(store, "alpaca_news", scorer)
         print(json.dumps(report, indent=2))
