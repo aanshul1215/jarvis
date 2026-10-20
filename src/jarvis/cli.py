@@ -19,6 +19,7 @@ from .market_data import AlpacaMarketData
 from .research import backtest_fixture, train_fixture
 from .review import review_outcomes
 from .runner import PaperDesk
+from .simulation import run_soak
 from .information import ingest, load_document
 from .risk import Governor, RiskPolicy
 from .storage import LocalStorage
@@ -89,8 +90,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis", description="JARVIS local research and paper desk")
     parser.add_argument("--home", help="JARVIS_HOME outside the Git checkout")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest"):
+    for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
+                 "soak"):
         command = commands.add_parser(name)
+        if name == "soak":
+            command.add_argument("--hours", type=float, default=24, help="simulated hours (default 24)")
+            command.add_argument("--poll-seconds", type=int, default=60, help="simulated poll interval")
+            command.add_argument("--seed", type=int, default=7)
         if name in ("backtest", "train"):
             command.add_argument("--fixture", action="store_true", help="use labeled synthetic equity and crypto histories")
         if name == "paper":
@@ -200,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
                                               for name, model in report["models"].items()}}
                            for asset, report in outputs.items()}
             print(json.dumps({"mode": "SYNTHETIC_RESEARCH", "results": outputs}, indent=2))
+    elif args.command == "soak":
+        target = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="jarvis-soak-")) / "desk"
+        report = run_soak(target, hours=args.hours, poll_seconds=args.poll_seconds, seed=args.seed)
+        print(json.dumps({**report, "home": str(target)}, indent=2, default=str))
+        return 0 if report["passed"] else 2
     elif args.command == "review":
         with LocalStorage(_home(args)) as store:
             print(json.dumps(review_outcomes(store), indent=2))

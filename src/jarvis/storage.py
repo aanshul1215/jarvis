@@ -123,7 +123,7 @@ class LocalStorage(StorageAdapter):
         self._writer = writer
         if writer:
             self._acquire_lock()
-        self._seq, self._prev_hash, self._event_ids = self._verify_and_recover()
+        self._seq, self._prev_hash, self._event_ids, self._events = self._verify_and_recover()
 
     def _acquire_lock(self) -> None:
         lock_path = self.home / "journal" / "writer.lock"
@@ -165,9 +165,9 @@ class LocalStorage(StorageAdapter):
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def _verify_and_recover(self) -> tuple[int, str, set[str]]:
+    def _verify_and_recover(self) -> tuple[int, str, set[str], list[dict[str, Any]]]:
         if not self.journal.exists():
-            return 0, "0" * 64, set()
+            return 0, "0" * 64, set(), []
         raw = self.journal.read_bytes()
         if raw and not raw.endswith(b"\n"):
             if not self._writer:
@@ -182,6 +182,7 @@ class LocalStorage(StorageAdapter):
             raw = raw[:cut]
         seq, prev = 0, "0" * 64
         ids: set[str] = set()
+        events: list[dict[str, Any]] = []
         for line in raw.splitlines():
             try:
                 item = json.loads(line)
@@ -196,7 +197,8 @@ class LocalStorage(StorageAdapter):
             except (ValueError, KeyError, TypeError) as exc:
                 raise StorageError("journal corruption; SAFE required") from exc
             seq, prev = item["seq"], digest
-        return seq, prev, ids
+            events.append({**item, "hash": digest})
+        return seq, prev, ids, events
 
     def _require_writer(self) -> None:
         if not self._writer or self._lock_file is None:
@@ -216,14 +218,18 @@ class LocalStorage(StorageAdapter):
         self._seq += 1
         self._prev_hash = digest
         self._event_ids.add(event.event_id)
+        self._events.append(json.loads(line))
         return event.event_id
 
     def read_events(self) -> list[dict[str, Any]]:
-        if not self._writer:
-            self._verify_and_recover()
-        if not self.journal.exists():
-            return []
-        return [json.loads(line) for line in self.journal.read_text().splitlines() if line]
+        """Verified journal records in order.
+
+        The lock-holding writer serves an in-memory copy kept in step with every append, instead of re-parsing
+        the whole file on each call; a reader re-verifies the file each time.
+        """
+        if self._writer:
+            return list(self._events)
+        return self._verify_and_recover()[3]
 
     def publish_json(self, name: str, document: dict[str, Any]) -> str:
         self._require_writer()

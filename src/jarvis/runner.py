@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
+from typing import Callable
 
 from .broker import BrokerAdapter, BrokerError
 from .config import PaperRuntime
@@ -22,7 +23,7 @@ ENTRY_ORDER_MAX_AGE = timedelta(minutes=30)
 
 class PaperDesk:
     def __init__(self, store: LocalStorage, broker: BrokerAdapter, data: AlpacaMarketData,
-                 policy: RiskPolicy, runtime: PaperRuntime):
+                 policy: RiskPolicy, runtime: PaperRuntime, *, clock: Callable[[], datetime] = utc_now):
         if not policy.owner_approved or not policy.paper_enabled:
             raise ValueError("owner paper approval required")
         available = {(spec.strategy_id, spec.version): spec for spec in baseline_specs()}
@@ -36,6 +37,7 @@ class PaperDesk:
             approved.append(replace(available[(identifier, version)], approval="PAPER"))
         self.store, self.broker, self.data = store, broker, data
         self.policy, self.runtime = policy, runtime
+        self.clock = clock  # injectable so replays and soak tests can run on simulated time
         self.engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry(approved), Mode.PAPER)
 
     def _event(self, kind: str, asset: str, status: str, reasons: tuple[str, ...] = (), payload: dict | None = None) -> None:
@@ -73,7 +75,7 @@ class PaperDesk:
 
     def run_once(self, *, now: datetime | None = None) -> dict:
         self.engine.reconcile()
-        clock = now or utc_now()
+        clock = now or self.clock()
         outcomes = {}
         try:
             held = self._resolve_open_orders(clock)
@@ -107,7 +109,9 @@ class PaperDesk:
                     continue
                 self.store.save_bars(bars)
                 quote = self.data.latest_quote(symbol, cls)
-                if utc_now() - quote.at > timedelta(seconds=self.policy.max_quote_age_seconds):
+                # Decision time is read when the decision is made, after the quote was fetched; the cycle start
+                # (``clock``) is earlier and would make a fresh quote look like it came from the future.
+                if self.clock() - quote.at > timedelta(seconds=self.policy.max_quote_age_seconds):
                     self._event("QUOTE_BLOCK", symbol, "BLOCK", ("STALE_QUOTE",),
                                 {"feed": quote.feed, "quote_at": quote.at.isoformat()})
                     outcomes[symbol] = "BLOCK_QUOTE"
@@ -130,7 +134,7 @@ class PaperDesk:
                     self._event("SIZE_BLOCK", symbol, "BLOCK", ("ORDER_NOTIONAL_BELOW_UNIT",))
                     outcomes[symbol] = "BLOCK_SIZE"
                     continue
-                outcomes[symbol] = self.engine.process(bars, as_of=utc_now(), reference_price=quote.ask,
+                outcomes[symbol] = self.engine.process(bars, as_of=self.clock(), reference_price=quote.ask,
                                                        quote_at=quote.at, spread_bps=quote.spread_bps,
                                                        quantity=quantity)
                 if self.engine.mode == Mode.SAFE:

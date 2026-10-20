@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from typing import Any
@@ -19,6 +20,20 @@ from .strategies import StrategyRegistry, select_intent
 # Shortfalls up to this fraction of the quantity bought are recorded as fee adjustments instead of SAFE.
 CRYPTO_FEE_TOLERANCE = 0.004
 EQUITY_HIGH_WATER = "equity-high-water"
+# Quantities are sent with at most this many decimals, rounded down so a sell never exceeds the position.
+QUANTITY_DECIMALS = 8
+# A leftover position worth less than this (for example fee dust after a crypto exit) is treated as flat.
+# ASSUMPTION: confirm the broker's minimum order size per asset in the Phase 0 probe.
+DUST_NOTIONAL = 1.0
+
+
+def sellable_quantity(position: float) -> float:
+    scale = 10 ** QUANTITY_DECIMALS
+    return math.floor(position * scale + 1e-6) / scale if position > 0 else 0.0
+
+
+def is_dust(position: float, price: float) -> bool:
+    return position <= 0 or sellable_quantity(position) * price < DUST_NOTIONAL
 
 
 class TradingEngine:
@@ -206,9 +221,10 @@ class TradingEngine:
         if not self._ready or self.mode not in (Mode.SHADOW, Mode.PAPER):
             raise BrokerError("exit path unavailable")
         state = self.broker.state()
-        qty = state.positions.get(asset_id, 0)
-        if qty <= 0:
+        position = state.positions.get(asset_id, 0)
+        if is_dust(position, price):
             return "FLAT"
+        qty = sellable_quantity(position)
         # The exit ID is tied to the entry it closes. An ID built from asset, reason and quantity alone repeats on
         # the next identical trade, so the old filled exit was found and no new sell was ever placed.
         entries = [item["event"]["payload"].get("client_order_id") for item in self.store.read_events()
@@ -241,7 +257,9 @@ class TradingEngine:
                 if event["event_type"] in ("BROKER_ORDER", "ORDER_UPDATE") and event.get("asset_id") == asset_id:
                     by_client[event["payload"].get("client_order_id")] = event
             entries = [event for event in by_client.values()
-                       if event["payload"].get("side") == "BUY" and event["payload"].get("status") == "FILLED"]
+                       # A partially filled entry whose remainder was cancelled or expired still opened the position.
+                       if event["payload"].get("side") == "BUY"
+                       and float(event["payload"].get("filled_quantity") or 0) > 0]
             costs = []
             remaining = order.filled_quantity
             for entry in reversed(entries):
@@ -277,7 +295,7 @@ class TradingEngine:
         if not bars:
             return []
         asset = bars[-1].asset_id
-        if self.broker.state().positions.get(asset, 0) <= 0:
+        if is_dust(self.broker.state().positions.get(asset, 0), bars[-1].close):
             return []
         events = [item["event"] for item in self.store.read_events()]
         intents = [e for e in events if e["event_type"] == "ORDER_INTENT" and e["asset_id"] == asset]
