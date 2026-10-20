@@ -131,7 +131,39 @@ existed yet.
 - Enters on a seeded coin flip (5% of bars), exits after 3 bars. Exists only so the gate can be shown to reject
   noise; never approved for paper or live.
 
-## Results
+## Results — development period 2016-03-01 to 2023-12-31 (run 2026-10-20)
 
-Recorded in `JARVIS_HOME/research/experiments.jsonl` (append-only). This register will get a results table once the
-development runs on real data exist; failures will be listed alongside any passes.
+**Setup:**
+- 27 US stocks and ETFs, Alpaca SIP daily bars (adjusted). Crypto bars on Alpaca start only in 2021, so crypto was not part of these runs.
+- $10,000 account, $1,000 base entry sized by the GARCH volatility forecast.
+- Code 8d04e90 (runs 1–4) and f152a38 (runs 5–7); the code paths these strategies use are identical.
+- Entries 1–7 in `JARVIS_HOME/research/experiments.jsonl`.
+- Each strategy has had **one** trial, and none was tuned.
+
+| Strategy | Run | Return / yr | Sharpe | Worst drawdown | Capital invested | Trades | Alpha / yr (beta-adjusted) | Bootstrap p | Years ahead | Leak test | Gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `breakout-volume@1.0.0` | 6 | 0.1% | 0.09 | -5% | 8% | 594 | -0.2% | 1.00 | 2/8 | pass | FAILED |
+| `trend-sma200@1.0.0` | 3 | 8.8% | 1.11 | -16% | 56% | 319 | +2.9% | 0.99 | 3/8 | pass | FAILED |
+| `meanrev-rsi2@1.0.0` | 4 | 2.8% | 0.44 | -17% | 35% | 2,804 | -1.3% | 1.00 | 1/8 | pass | FAILED |
+| `volatility-breakout@1.0.0` | 2 | 3.8% | 0.73 | -7% | 35% | 488 | +1.4% | 1.00 | 1/8 | pass | FAILED |
+| `relative-strength@1.0.0` | 1 | 4.1% | 1.09 | -6% | 16% | 161 | +1.3% | 1.00 | 2/8 | pass | FAILED |
+| `earnings-drift@1.0.0` | 5 | 0.6% | 0.48 | -3% | 3% | 90 | +0.2% | 1.00 | 2/8 | pass | FAILED |
+| `random-entry@1.0.0` (control) | 7 | -0.4% | -0.09 | -10% | 25% | 1,782 | -3.1% | 1.00 | 1/8 | pass | FAILED (as it must) |
+
+Benchmarks over the same period:
+- Equal weight, rebalanced monthly: 18.1% a year, Sharpe 1.09, worst drawdown -30%.
+- Equal-weight buy and hold: 25.5%, 1.06, -42%.
+- T-bills: 1.6%.
+
+**Reading the results:**
+- **Every strategy failed** the pre-registered gate against the fully invested equal-weight benchmark, as this register expected. Each failed for the same three reasons: not significant, behind in most years, and not robust to doubled costs.
+- No leak was found: every run passed the future-poisoning test.
+- The random control failed, so the gate does reject noise.
+- **Trend following** behaved as the research predicted (brief 18). It matched the benchmark's risk-adjusted return (Sharpe 1.11 vs 1.09) with about half the drawdown. It is a risk reducer, not a return source.
+- **Relative strength** had a similar Sharpe at very low exposure.
+- **Low capital use** dominates the comparison:
+  - $1,000 entries on a $10,000 account left 3–56% of the capital invested, against 100% for the benchmark.
+  - Almost no strategy can beat a fully invested benchmark on raw daily return that way.
+  - This was known when the gate was written. Changing the sizing or the comparison now would be a new, separately counted trial, and it is listed as an open decision for the owner, not applied after the fact.
+- **The universe favours holding:** it was chosen in 2026 and includes NVDA, META and TSLA, so it flatters buy and hold (survivorship bias), which raises the bar for every strategy.
+- The holdout (2024 onward) was not used: no strategy passed development.
