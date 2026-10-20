@@ -51,6 +51,7 @@ All write under `JARVIS_HOME` and record a journal event. None places an order.
 | `jarvis backtest --universe FILE --strategy ID@VERSION [--dataset 1Day-adjusted --start 2016-03-01 --end 2023-12-31 --split DEVELOPMENT]` | stored bars | Replays history through the real trading code, compares with benchmarks, applies the gate and appends to `research/experiments.jsonl`. Keep 2024 onward as the holdout: `--split HOLDOUT` may be used once per strategy configuration |
 
 | `jarvis model-study --kind volatility\|regime\|risk [--source fred\|bars --universe FILE --split DEVELOPMENT]` | `macro-update` (fred) or `backfill` (bars) | Phase 5 pre-registered comparison of each situational-awareness model with its baseline (`docs/07-awareness/MODEL_REGISTER.md`); appends to `research/model_studies.jsonl`; `--split HOLDOUT` once per study |
+| `jarvis selector-study --universe FILE [--strategy ID@VERSION ... --split DEVELOPMENT]` | stored bars | Phase 7: replays each strategy alone, builds month-by-month allocations from past results only, and runs the pre-registered chain (equal weight, regime lookup, meta-label filter, contextual bandit) through combined replays (`docs/08-selector/SELECTOR_REGISTER.md`); appends to `research/selector_studies.jsonl` |
 | `jarvis cost-report` | paper fills | Realised cost of each filled order against the fixed assumption and the cost model (needs 50+ fills) |
 
 Backtests accept `--sizing volatility --volatility-model <winner>` to size each entry by the forecast volatility (daily bars).

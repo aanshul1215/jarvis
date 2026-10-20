@@ -82,8 +82,40 @@ def _policy(spec: BacktestSpec) -> RiskPolicy:
                       paper_enabled=True, crypto_enabled=True, owner_approved=True)
 
 
-def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=ReplayData, specs=None) -> dict:
-    """Replay one period; returns the equity curve, trades and metrics (no gate, no registry write)."""
+def trade_records(events: list[dict], costs: CostModel) -> list[dict]:
+    """One row per completed trade: strategy, entry decision time and features, exit decision time, net return.
+
+    Net return = exit fill / entry fill - 1 minus the fee on both sides. The fill prices already include the half
+    spread; the fee is charged separately in dollars, so it is subtracted here. Used by the Phase 7 selector, which
+    may learn from a trade only after its exit was decided.
+    """
+    intents = {e["payload"]["client_order_id"]: e["payload"] for e in events if e["event_type"] == "ORDER_INTENT"}
+    snapshots = {e["payload"]["snapshot_id"]: e["payload"]["values"] for e in events
+                 if e["event_type"] == "FEATURE_SNAPSHOT"}
+    rows = []
+    for e in events:
+        if e["event_type"] != "TRADE_OUTCOME":
+            continue
+        out = e["payload"]
+        entry = intents.get(out.get("entry_client_order_id"))
+        if entry is None or not out.get("entry_price_estimate"):
+            continue
+        cls = AssetClass(entry["asset_class"])
+        side_cost = costs.fee(cls)
+        rows.append({"strategy_id": out.get("strategy_id"), "asset_id": e.get("asset_id"),
+                     "entry_decided_at": entry["decided_at"], "exit_decided_at": out.get("exit_decided_at"),
+                     "features": snapshots.get(entry.get("snapshot_id"), {}),
+                     "net_return": out["exit_price"] / out["entry_price_estimate"] - 1 - 2 * side_cost})
+    return rows
+
+
+def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=ReplayData, specs=None,
+                 allocation=None, entry_filter=None) -> dict:
+    """Replay one period; returns the equity curve, trades and metrics (no gate, no registry write).
+
+    ``allocation`` and ``entry_filter`` are the Phase 7 selector hooks (see ``TradingEngine``); they must be built
+    only from information before each decision, which ``selector.py`` guarantees and tests.
+    """
     clock = ReplayClock(spec.start)
     data = data_cls(data_store, spec.assets, spec.dataset, clock, spec.costs)
     broker = ReplayBroker(clock, data, spec.costs, cash=spec.initial_cash)
@@ -97,6 +129,7 @@ def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=Repla
                              seed=spec.seed, persist_market_data=False,
                              earnings=EarningsCalendar(data_store, [s for s, c in spec.assets if c == AssetClass.EQUITY]),
                              situation=SituationBuilder(data_store))
+            desk.engine.allocation, desk.engine.entry_filter = allocation, entry_filter
             for moment in data.schedule(spec.start, spec.end):
                 clock.now = moment
                 broker.step()
@@ -120,7 +153,7 @@ def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=Repla
     if data.lookahead_violations:  # the runner turns errors into SAFE; a look-ahead must abort the evaluation
         raise LookAheadError(data.lookahead_violations[0])
     series = daily_series(points)
-    return {"series": series, "candidates": candidates,
+    return {"series": series, "candidates": candidates, "trade_records": trade_records(events, spec.costs),
             "average_exposure": float(np.mean(exposure)) if exposure else 0.0, "metrics": summarize(series),
             "trades": trade_stats(outcomes),
             "fills": len(broker.fills), "stopped": stopped,
@@ -280,7 +313,13 @@ class ExperimentRegistry:
 
     def trials(self, strategy_versions: tuple[str, ...]) -> int:
         key = sorted(strategy_versions)
-        return sum(1 for r in self.records() if sorted(r["spec"]["strategy_versions"]) == key)
+        return sum(1 for r in self.records() if r.get("status") != "STARTED"
+                   and sorted(r["spec"]["strategy_versions"]) == key)
+
+    def claim_holdout(self, record: dict) -> None:
+        """Record that a holdout evaluation has begun. Any later attempt is refused, even if this one is killed
+        before it finishes (an interrupted holdout has still been seen)."""
+        self.append({**record, "status": "STARTED"})
 
     def holdout_used(self, fingerprint: str) -> bool:
         return any(r["fingerprint"] == fingerprint and r["spec"]["split"] == "HOLDOUT" for r in self.records())
@@ -344,6 +383,8 @@ def evaluate(data_home: Path, spec: BacktestSpec, *, data_cls=ReplayData, specs=
         raise PermissionError("holdout already evaluated for this strategy configuration; it may be used once")
     record = {"created_at": iso(utc_now()), "code_version": _code_version(), "fingerprint": spec.fingerprint(),
               "spec": _spec_record(spec), "evidence": "BACKTEST"}
+    if spec.split == "HOLDOUT":
+        registry.claim_holdout(record)
     try:
         with LocalStorage(Path(data_home), writer=False) as store:
             record["data_fingerprint"] = _data_fingerprint(store, spec)

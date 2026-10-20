@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
-                 "cost-report"):
+                 "cost-report", "selector-study"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -125,6 +125,14 @@ def main(argv: list[str] | None = None) -> int:
             # 2026-10-19). --sizing fixed exists for diagnostics; every run is still registered as a trial.
             command.add_argument("--sizing", default="volatility", choices=("fixed", "volatility"))
             command.add_argument("--volatility-model", default="garch", help="Phase 5 study winner")
+        if name == "selector-study":
+            command.add_argument("--universe", required=True, help="universe JSON; assets with stored bars are used")
+            command.add_argument("--strategy", action="append",
+                                 help="strategy-id@version (repeatable; default: the pre-registered library)")
+            command.add_argument("--dataset", default="1Day-adjusted")
+            command.add_argument("--start", default="2016-03-01")
+            command.add_argument("--end", default="2023-12-31", help="last date of data to use (holdout: latest)")
+            command.add_argument("--split", default="DEVELOPMENT", choices=("DEVELOPMENT", "HOLDOUT"))
         if name == "model-study":
             command.add_argument("--kind", required=True, choices=("volatility", "regime", "risk"))
             command.add_argument("--source", default="fred", choices=("fred", "bars"),
@@ -271,6 +279,27 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "macro-update":
         with LocalStorage(_home(args)) as store:
             print(json.dumps(update_macro(store, series=SERIES + PRICE_SERIES), indent=2))
+    elif args.command == "selector-study":
+        from datetime import datetime, timezone
+        from .harness import BacktestSpec
+        from .selector import run_selector_study
+        from .strategies import baseline_specs, library_specs
+        home = _home(args)
+        with LocalStorage(home, writer=False) as store:
+            assets = tuple((a.symbol, a.asset_class) for a in load_universe(Path(args.universe))
+                           if store.load_bars(a.symbol, a.asset_class, dataset=args.dataset))
+        if not assets:
+            print(json.dumps({"result": "BLOCKED", "reason": f"no stored {args.dataset} bars; run backfill first"}))
+            return 2
+        versions = tuple(args.strategy or [f"{s.strategy_id}@{s.version}" for s in baseline_specs() + library_specs()])
+        when = lambda text: datetime.fromisoformat(text).replace(tzinfo=timezone.utc)  # noqa: E731
+        base = BacktestSpec(versions, assets, args.dataset, "1Day", when(args.start), when(args.end),
+                            sizing="volatility", volatility_model="garch")
+        record = run_selector_study(home, base, split=args.split, progress=lambda m: print(m, flush=True))
+        print(json.dumps({k: record[k] for k in ("seq", "fingerprint", "status", "spec")} |
+                         {"selected": record["result"]["selected"],
+                          "stages": [{k: s[k] for k in ("stage", "candidate", "incumbent", "gate")}
+                                     for s in record["result"]["stages"]]}, indent=2, default=str))
     elif args.command == "model-study":
         from .studies import run_study
         if args.source == "bars" and not args.universe:

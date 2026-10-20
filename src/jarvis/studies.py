@@ -88,6 +88,8 @@ def run_study(home: Path, kind: str, *, source: str = "fred", split: str = "DEVE
     record = {"created_at": iso(utc_now()), "code_version": _code_version(), "fingerprint": fingerprint,
               "study_version": STUDY_VERSION, "spec": {"kind": kind, "source": source, "split": split, "assets": assets},
               "evidence": "RESEARCH"}
+    if split == "HOLDOUT":
+        registry.claim_holdout(record)
     try:
         if kind == "volatility":
             result = {"primary": volatility.compare(series, horizon=volatility.PRIMARY_HORIZON, split=split),

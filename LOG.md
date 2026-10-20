@@ -127,3 +127,28 @@ Append dated entries with branch, commit, commands actually run, evidence, failu
   - Correlation: not significant in development, significant in holdout; it waits for the universe data.
 - After the study, a recorded fallback was added: the baseline sizes orders until GARCH has 1,000 returns. It applies to strategy sizing only. Backtest CLI defaults are now `--sizing volatility --volatility-model garch`.
 - The registry append now takes an exclusive lock: parallel study runs could otherwise fork the hash chain. A test was added.
+
+## 2026-10-20 — Phase 7 strategy selector (pre-registered; not yet run on real data)
+
+- New `selector.py`:
+  - sleeves (each strategy replayed alone), with per-trade records;
+  - market regime labels dated by when they became known;
+  - monthly allocation schedules built from history strictly before each month: equal weight, regime lookup, and a contextual Thompson-sampling bandit;
+  - a yearly meta-label logistic filter with a 7-day purge;
+  - a chain of stages judged on combined replays through the real trading code, with a gate requiring a significant excess, a smaller drawdown and robustness to doubled costs.
+- Engine hooks: `allocation(now)` scales new entries per strategy (capped at the owner's per-order limit, rounded down, clamped after rounding); `entry_filter` vetoes entries. Both are journaled (`allocation_multiplier`, `ordered_notional`, `META_FILTER`, `ALLOCATION_ZERO`).
+- Trade outcomes now record the entry order and the exit decision time.
+- `selector-study` command. Pre-registration in `docs/08-selector/SELECTOR_REGISTER.md`.
+- An independent review found:
+  1. Trade labels subtracted the spread twice (the fill prices already include it). Fixed: fees only.
+  2. The holdout re-ran the whole selection on holdout data. Fixed: it only confirms development's choice against equal weight, in one test.
+  3. Labels were dated by UTC bar date. Fixed: dated by the New York day they became known; regime lookup now pairs each return with the label known before it.
+  4. A stopped sleeve was silently truncated. Fixed: the study fails.
+  5. Minor fixes:
+     - rounding could exceed the cap;
+     - the audit notional was recorded before scaling;
+     - a cut-off test boundary;
+     - an interrupted holdout could be re-run: it is now claimed first, for strategy, model and selector holdouts alike, and STARTED records do not count as trials;
+     - the split boundaries are now in New York time;
+     - duplicate strategy ids are now rejected.
+- Synthetic check: on a random-walk market every stage fails and equal weight is kept. Real-data run: BLOCKED on the Alpaca back-fill.

@@ -105,7 +105,10 @@ def test_holdout_may_be_evaluated_once(tmp_path):
     with pytest.raises(PermissionError, match="once"):
         evaluate(home, spec)
     records = ExperimentRegistry(home).records()
-    assert [r["seq"] for r in records] == [1] and records[0]["prev_hash"] == "0" * 64
+    # The holdout is claimed (STARTED) before it runs, then completed; the refused second attempt adds nothing.
+    assert [(r["seq"], r["status"]) for r in records] == [(1, "STARTED"), (2, "COMPLETED")]
+    assert records[0]["prev_hash"] == "0" * 64 and records[1]["prev_hash"] == records[0]["hash"]
+    assert ExperimentRegistry(home).trials(("breakout-volume@1.0.0",)) == 1      # the claim is not a trial
 
 
 def _bar(start, o, h, l, c):

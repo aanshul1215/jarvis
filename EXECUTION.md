@@ -47,6 +47,19 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Performance | MEASURED | 6-month replay 20.2 s → 0.7 s after removing a per-cycle journal re-read; full evaluation of 2.3 years × 4 stocks (base, doubled costs, benchmarks, 8 poisoning cut-offs) ≈ 20–35 s |
 | Real-data evaluation | BLOCKED — NEEDS ALPACA PAPER KEYS | `jarvis backtest --universe ... --strategy ...` runs once `backfill` has data |
 
+## Phase 7 strategy selector — 2026-10-20
+
+| Item | Status | Evidence |
+|---|---|---|
+| Selector hooks in the real order path: per-strategy size multipliers (capped at the owner's per-order limit, rounded down) and a per-entry filter, both journaled | TESTED | `test_engine_applies_multipliers_and_the_filter_to_new_entries` |
+| Sleeves (each strategy alone) with trade records: entry features, exit decision time, return net of fees | TESTED | `test_trade_records_charge_only_fees_on_top_of_fill_prices` |
+| Allocators: equal weight, regime lookup, contextual Thompson-sampling bandit; schedules see only earlier days | TESTED | Planted-structure and noise tests; scrambling the future leaves earlier allocations unchanged |
+| Meta-label filter (yearly logistic regression, 7-day purge) | TESTED | Learns a planted feature; ignores trades that exit after the cut-off |
+| Chain of stages through combined replays, with a gate (significance, smaller drawdown, double costs); holdout only confirms development's choice, once, and is claimed before it runs | TESTED (synthetic) | On a random-walk market every stage fails and equal weight is kept |
+| Pre-registration | WRITTEN before any real run | `docs/08-selector/SELECTOR_REGISTER.md` |
+| Phase 7 exit test (beats the equal-weight blend on unseen periods, after costs, with smaller drawdowns) | BLOCKED — NEEDS ALPACA BACK-FILL | `jarvis selector-study --universe …` |
+| Independent code review | DONE — 2 definite bugs fixed (spread counted twice in trade labels; holdout re-ran the whole selection) plus timing, rounding and bookkeeping fixes | LOG 2026-10-20 |
+
 ## Phase 5 situational-awareness models — 2026-10-19
 
 | Item | Status | Evidence |

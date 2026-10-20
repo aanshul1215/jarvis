@@ -39,12 +39,23 @@ def is_dust(position: float, price: float) -> bool:
     return position <= 0 or sellable_quantity(position) * price < DUST_NOTIONAL
 
 
+def _round_down(quantity: float, asset_class: AssetClass) -> float:
+    if asset_class == AssetClass.EQUITY:
+        return float(math.floor(quantity + 1e-9))
+    scale = 10 ** QUANTITY_DECIMALS
+    return math.floor(quantity * scale + 1e-6) / scale
+
+
 class TradingEngine:
     def __init__(self, store: LocalStorage, broker: BrokerAdapter, governor: Governor,
                  registry: StrategyRegistry, mode: Mode):
         self.store, self.broker, self.governor, self.registry, self.mode = store, broker, governor, registry, mode
         self._ready = False
         self._peak: float | None = None  # equity high-water mark, loaded once from the store
+        # Phase 7 strategy selector hooks (None = every strategy at its base size, no trade filter):
+        # ``allocation(now)`` -> {strategy_id: size multiplier}; ``entry_filter(strategy_id, snapshot, now)`` -> bool.
+        self.allocation = None
+        self.entry_filter = None
 
     def reconcile(self) -> None:
         """Broker truth is checked before new risk after each process start."""
@@ -162,6 +173,31 @@ class TradingEngine:
                              reason_codes=("NO_APPROVED_STRATEGY",))
                 results.append({"candidate": candidate.candidate_id, "result": "FLAT"})
                 continue
+            if self.entry_filter is not None and not self.entry_filter(intent.strategy_id, snapshot, now):
+                self._record("NO_TRADE", candidate.candidate_id, asset_id=candidate.asset_id,
+                             payload={"strategy_id": intent.strategy_id}, reason_codes=("META_FILTER",))
+                results.append({"candidate": candidate.candidate_id, "result": "FILTERED"})
+                continue
+            multiplier = 1.0
+            if self.allocation is not None:
+                multiplier = float(self.allocation(now).get(intent.strategy_id, 1.0))
+                scaled = intent.quantity * multiplier
+                policy = self.governor.policy
+                cap = policy.max_order_notional / intent.reference_price \
+                    if policy is not None and intent.reference_price > 0 else None
+                if cap is not None:  # never push an order past the owner's cap, even after rounding
+                    scaled = min(scaled, cap)
+                scaled = _round_down(scaled, intent.asset_class)
+                if cap is not None and scaled > cap:
+                    unit = 1.0 if intent.asset_class == AssetClass.EQUITY else 10 ** -QUANTITY_DECIMALS
+                    scaled = max(0.0, scaled - unit)
+                if scaled <= 0:
+                    self._record("NO_TRADE", candidate.candidate_id, asset_id=candidate.asset_id,
+                                 payload={"strategy_id": intent.strategy_id, "allocation_multiplier": multiplier},
+                                 reason_codes=("ALLOCATION_ZERO",))
+                    results.append({"candidate": candidate.candidate_id, "result": "FLAT"})
+                    continue
+                intent = replace(intent, quantity=scaled)
             client_id = stable_id("jarvis", intent.intent_id)
             risk = self.governor.assess(intent, self._risk_state(), self.mode, now, quote_at or bars[-1].available_at,
                                          spread_bps, client_id, self.store.index.entry_ids,
@@ -183,7 +219,9 @@ class TradingEngine:
                                   "model_id": intent.model_id, "model_version": intent.model_version,
                                   "entry_bar_end_at": iso(bars[-1].end_at),
                                   "exit_after_bars": intent.exit_after_bars, "spread_bps": spread_bps,
-                                  **(sizing or {})})
+                                  "snapshot_id": snapshot.snapshot_id, "allocation_multiplier": multiplier,
+                                  **(sizing or {}),
+                                  "ordered_notional": risk.allowed_quantity * intent.reference_price})
             try:
                 order = self.broker.submit(client_id, intent.asset_id, intent.asset_class,
                                            intent.side, risk.allowed_quantity, intent.reference_price)
@@ -209,7 +247,8 @@ class TradingEngine:
                             "client_order_id": client_id})
         return results
 
-    def exit_position(self, asset_id: str, asset_class, price: float, *, reason: str) -> str:
+    def exit_position(self, asset_id: str, asset_class, price: float, *, reason: str,
+                      decided_at: datetime | None = None) -> str:
         if not self._ready or self.mode not in (Mode.SHADOW, Mode.PAPER):
             raise BrokerError("exit path unavailable")
         state = self.broker.state()
@@ -225,6 +264,7 @@ class TradingEngine:
                               reason, str(qty))
         self._record("EXIT_INTENT", client_id, asset_id=asset_id,
                      payload={"client_order_id": client_id, "quantity": qty, "reason": reason, "side": "SELL",
+                              "decided_at": iso(decided_at) if decided_at else None,
                               "reference_price": price, "asset_class": getattr(asset_class, "value", asset_class)})
         order = self.broker.find_order(client_id)
         if order is None:
@@ -268,6 +308,8 @@ class TradingEngine:
                                       "fees_and_slippage": "UNKNOWN", "reason": reason,
                                       "strategy_id": strategy.get("strategy_id"),
                                       "strategy_version": strategy.get("strategy_version"),
+                                      "entry_client_order_id": strategy.get("client_order_id"),
+                                      "exit_decided_at": iso(decided_at) if decided_at else None,
                                       "model_id": strategy.get("model_id"),
                                       "model_version": strategy.get("model_version"),
                                       "evidence_class": getattr(self.broker, "evidence_class", "PAPER")})
@@ -308,7 +350,8 @@ class TradingEngine:
                 else:
                     reason = strategy.exit_reason(snapshot, OpenPosition(asset, entry_price, elapsed), context)
             if reason:
-                status = self.exit_position(asset, bars[-1].asset_class, bars[-1].close, reason=reason)
+                status = self.exit_position(asset, bars[-1].asset_class, bars[-1].close, reason=reason,
+                                            decided_at=max(b.available_at for b in bars))
                 return [{"asset_id": asset, "exit_reason": reason, "status": status}]
             return [{"asset_id": asset, "exit_reason": "HOLD", "bars_remaining": limit - elapsed}]
         self.mode = Mode.SAFE
