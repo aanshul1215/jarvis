@@ -13,6 +13,7 @@ dependencies = [
   "scikit-learn==1.9.1",
   "joblib==1.6.0",
   "numpy==2.5.4",
+  "tzdata==2026.5",  # zoneinfo time-zone data on Windows (New York time for SEC filings)
 ]
 
 [project.optional-dependencies]

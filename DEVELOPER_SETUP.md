@@ -35,3 +35,18 @@ Local storage uses Parquet for bars/features, append-only hash-chained JSONL for
 `train --fixture` runs expanding chronological validation folds and an untouched holdout for a constant baseline and logistic challenger. It stores calibration bins, downside measures, model hashes, and an immutable `model-registry.json` under the local runtime. Every entry stays in `RESEARCH`; this command never approves a model or strategy.
 
 The information path accepts dated local JSON documents using the [example schema](info.example.json). `info-ingest --file PATH` persists the original text and a short, deterministic extractive summary under `JARVIS_HOME/information/`, with an `INFO_FEATURE` journal event. Documents are scoped to one asset and processed when supplied, so the trading cycle does not scrape or summarize the whole universe. Lexical sentiment is unvalidated and has no trading authority. News/SEC collectors, source licensing checks, and real event impact models remain future work.
+
+## Data commands (Phase 2)
+
+All write under `JARVIS_HOME` and record a journal event. None places an order.
+
+| Command | Needs | What it does |
+|---|---|---|
+| `jarvis macro-update` | nothing | FRED market-stress series (VIX, 3-month VIX, Treasury yields, T-bill, Baa credit spread) with publication-time availability |
+| `jarvis calendar-update` | nothing | FOMC decisions and CPI/jobs release dates 2016 onward, plus the published schedule ahead |
+| `jarvis edgar-update --universe FILE` | `JARVIS_SEC_USER_AGENT` | SEC filings, earnings-release times and fundamentals for the universe's stocks |
+| `jarvis backfill --universe FILE [--start 2016-01-01]` | Alpaca paper keys | Daily and hourly bars (raw and adjusted) into point-in-time datasets |
+| `jarvis data-check --universe FILE` | stored data | Duplicate, gap, spike, stale-price and zero-volume report |
+| `jarvis soak [--hours 24]` | nothing | Accelerated mock paper run of the full loop (Phase 1 exit test) |
+
+`config/universe.example.json` is a proposed starting universe; copy it to `JARVIS_HOME/config/universe.json` and edit.

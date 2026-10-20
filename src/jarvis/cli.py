@@ -23,6 +23,8 @@ from .simulation import run_soak
 from .history import alpaca_clients, backfill, dataset_name, DATASETS, default_start, load_universe
 from .macro import SERIES, update_macro
 from .quality import check_bars
+from .edgar import EdgarClient, update_edgar
+from .calendars import http_text, update_calendars
 from .information import ingest, load_document
 from .risk import Governor, RiskPolicy
 from .storage import LocalStorage
@@ -94,9 +96,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--home", help="JARVIS_HOME outside the Git checkout")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
-                 "soak", "macro-update", "backfill", "data-check"):
+                 "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update"):
         command = commands.add_parser(name)
-        if name in ("backfill", "data-check"):
+        if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
         if name == "backfill":
             command.add_argument("--start", default="2016-01-01", help="first date to download (UTC), YYYY-MM-DD")
@@ -234,6 +236,18 @@ def main(argv: list[str] | None = None) -> int:
             report = backfill(store, stock, crypto, load_universe(Path(args.universe)), start=start,
                               timeframes=tuple(args.timeframes.split(",")))
         print(json.dumps(report, indent=2))
+    elif args.command == "calendar-update":
+        agent = os.environ.get("JARVIS_SEC_USER_AGENT", "")
+        with LocalStorage(_home(args)) as store:
+            print(json.dumps(update_calendars(store, lambda url: http_text(url, agent or "jarvis")), indent=2))
+    elif args.command == "edgar-update":
+        agent = os.environ.get("JARVIS_SEC_USER_AGENT")
+        if not agent:
+            print(json.dumps({"result": "BLOCKED", "reason": "set JARVIS_SEC_USER_AGENT to 'Name email' (SEC requirement)"}))
+            return 2
+        tickers = [a.symbol for a in load_universe(Path(args.universe)) if a.asset_class == AssetClass.EQUITY]
+        with LocalStorage(_home(args)) as store:
+            print(json.dumps(update_edgar(store, EdgarClient(agent), tickers), indent=2))
     elif args.command == "data-check":
         from datetime import timedelta
         rows = []

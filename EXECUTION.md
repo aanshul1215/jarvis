@@ -28,7 +28,9 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Alpaca history back-fill (SIP, raw and adjusted, deterministic availability) | TESTED WITH FAKE CLIENT â€” NEEDS PAPER KEYS | Rebuild from scratch gives byte-identical files; `jarvis backfill` fails closed without keys |
 | Data-quality checks (duplicates, gaps, spikes, stale prices, zero volume) | TESTED LOCALLY | `jarvis data-check` |
 | Proposed starting universe (27 stocks/ETFs + BTC/ETH) | PROPOSED â€” OWNER TO CONFIRM | `config/universe.example.json` |
-| SEC EDGAR filings, event calendars, breadth universe, news/social collectors | NOT STARTED | EDGAR needs a contact for its required User-Agent; collectors need source decisions |
+| SEC EDGAR filings, earnings releases and fundamentals | TESTED LOCALLY + LIVE RUN | Live 2026-10-19 (AAPL, MSFT, SPY): ~2,200 filings, 87 earnings releases timed from index pages, ~3,100 fundamental values; re-run costs 3 requests per company. The submissions JSON `acceptanceDateTime` was found to be unreliable (8 h off for AAPL earnings 8-Ks), so earnings use the index-page "Accepted" time |
+| Event calendars (FOMC decisions, CPI and jobs releases) | TESTED LOCALLY + LIVE RUN | Live build: 381 events 2016â€“2027 (8 FOMC, 12 CPI, 12 jobs per year); 2020 emergency meetings stored as unscheduled, the cancelled 17â€“18 March 2020 meeting never counts as upcoming |
+| Breadth universe, news/social collectors | NOT STARTED | Collectors need source decisions (Reddit app credentials; Alpaca news once keys exist) |
 
 ## Implementation dependency map — 2026-10-18
 
