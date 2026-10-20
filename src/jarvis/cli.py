@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
-                 "cost-report", "selector-study", "collect", "score-news"):
+                 "cost-report", "selector-study", "collect", "score-news", "daily"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -125,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
             # 2026-10-19). --sizing fixed exists for diagnostics; every run is still registered as a trial.
             command.add_argument("--sizing", default="volatility", choices=("fixed", "volatility"))
             command.add_argument("--volatility-model", default="garch", help="Phase 5 study winner")
+        if name == "daily":
+            command.add_argument("--universe", required=True, help="universe JSON")
+            command.add_argument("--enable-orders", action="store_true",
+                                 help="after collecting and scoring, run one guarded paper cycle that may place orders")
         if name == "collect":
             command.add_argument("--universe", required=True, help="universe JSON")
             command.add_argument("--sources", default="news,reddit,feargreed",
@@ -327,6 +331,26 @@ def main(argv: list[str] | None = None) -> int:
                 report["feargreed"] = collectors.collect_fear_greed(store, history=args.history)
             collectors.record_collection(store, report)
         print(json.dumps(report, indent=2, default=str))
+    elif args.command == "daily":
+        # The morning routine, in order, each step logged: fresh information first, then one paper decision cycle.
+        # Meant to run once per US trading day at about 10:00 New York time (entries are limit orders valid for 30
+        # minutes, so the stock market must be open). A failed step is reported and stops the routine.
+        import subprocess
+        import sys as _sys
+        base = [_sys.executable, "-m", "jarvis", "--home", str(_home(args))]
+        steps = [("collect", base + ["collect", "--universe", args.universe]),
+                 ("score-news", base + ["score-news"])]
+        if args.enable_orders:
+            steps.append(("paper", base + ["paper", "--once", "--enable-orders"]))
+        summary = []
+        for name, command in steps:
+            result = subprocess.run(command, capture_output=True, text=True)
+            summary.append({"step": name, "exit": result.returncode, "output": result.stdout[-4000:],
+                            "errors": result.stderr[-2000:] if result.returncode else ""})
+            if result.returncode != 0:
+                break
+        print(json.dumps(summary, indent=2))
+        return 0 if all(s["exit"] == 0 for s in summary) else 2
     elif args.command == "score-news":
         from .sentiment import FinbertScorer, score_archive
         home = _home(args)
