@@ -140,15 +140,16 @@ def collect_news(store: LocalStorage, client, universe: list[UniverseAsset], *, 
 
 # --- Reddit --------------------------------------------------------------------------------------------------------
 
-def mentions(text: str, universe: list[UniverseAsset]) -> list[str]:
-    """Universe assets a post mentions: '$AAPL' or the bare ticker in capitals, and crypto names."""
+def mentions(text: str, universe: list[UniverseAsset], *, cashtag_only: bool = False) -> list[str]:
+    """Universe assets a post mentions: '$AAPL' or the bare ticker in capitals (only '$AAPL' when ``cashtag_only``),
+    and crypto names."""
     found = set()
     for asset in universe:
         if asset.asset_class == AssetClass.CRYPTO:
             words = CRYPTO_WORDS.get(asset.symbol, ())
             if any(re.search(rf"(?<![A-Za-z]){w}(?![A-Za-z])", text, re.IGNORECASE) for w in words):
                 found.add(asset.symbol)
-        elif re.search(rf"(?<![A-Za-z$])\$?{re.escape(asset.symbol)}(?![A-Za-z])", text):
+        elif re.search(rf"(?<![A-Za-z$])\${'' if cashtag_only else '?'}{re.escape(asset.symbol)}(?![A-Za-z])", text):
             found.add(asset.symbol)
     return sorted(found)
 
@@ -275,7 +276,11 @@ def bluesky_rows(posts: Iterable[dict], universe: list[UniverseAsset], queried: 
         record = post.get("record") or {}
         text = record.get("text") or ""
         indexed = parse_utc(post.get("indexedAt") or record.get("createdAt"))
-        symbols = sorted(set(mentions(text, universe)) | {queried})
+        # Bluesky search matches loosely ("$META" also finds "Meta", "$DIA" finds the Portuguese "dia"), so a stock
+        # counts only when the post itself contains its cashtag; ``queried`` is not trusted on its own.
+        symbols = mentions(text, universe, cashtag_only=True)
+        if not symbols:
+            continue
         did = (post.get("author") or {}).get("did", "")
         rows.append({"item_id": f"bluesky-{post['cid']}", "source": "bluesky", "published_at": iso(min(indexed, seen_at)),
                      "available_at": iso(seen_at), "first_seen_at": iso(seen_at), "revised_after_publication": False,

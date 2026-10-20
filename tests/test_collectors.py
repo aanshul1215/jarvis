@@ -119,6 +119,9 @@ def test_bluesky_collector_signs_in_with_an_app_password_and_archives_once(tmp_p
         report = collectors.collect_bluesky(store, client, UNIVERSE, salt="pepper", now=lambda: NOW)
         rows = store.read_table("information", "bluesky", "2026-10")
     assert report["received"] == 4 and report["added"] == 1                 # the same post found by four searches
+    loose = {"cid": "c2", "record": {"text": "Meta announced something; un bon dia"}, "indexedAt": "2026-10-20T14:00:00Z",
+             "author": {"did": "d"}}
+    assert collectors.bluesky_rows([loose], UNIVERSE + [UniverseAsset("META", AssetClass.EQUITY)], "META", NOW, "s") == []
     row = rows[0]
     assert row["symbols"] == "AAPL,BTC/USD" and row["available_at"] == "2026-10-20T15:00:00Z"
     assert row["author"] != "did:plc:abc" and "x.bsky.social" not in json.dumps(row)
