@@ -141,6 +141,12 @@ def _facts(document: dict, ticker: str, cik: int) -> list[dict]:
     return rows
 
 
+# Companies that moved to a new SEC registrant keep their history under the old CIK. ExxonMobil reorganised into
+# ExxonMobil Holdings Corp (CIK 2115436, ticker XOM from July 2026); 2016-2026 filings are under Exxon Mobil Corp
+# (CIK 34088). Checked on data.sec.gov 2026-10-20.
+PREDECESSOR_CIKS: dict[str, tuple[int, ...]] = {"XOM": (34088,)}
+
+
 def update_edgar(store: LocalStorage, client: EdgarClient, tickers: list[str], *,
                  since: date = date(2016, 1, 1)) -> dict:
     """Refresh filings and fundamentals for ``tickers``; tickers SEC does not know (e.g. some ETFs) are reported."""
@@ -153,7 +159,9 @@ def update_edgar(store: LocalStorage, client: EdgarClient, tickers: list[str], *
             continue
         known = {row["accession"]: row for row in store.read_table("edgar", "filings", ticker)}
         rows, index_lookups = [], 0
-        for filing in load_filings(client, cik, since):
+        registrants = (cik, *PREDECESSOR_CIKS.get(ticker.upper(), ()))
+        filings = [(c, f) for c in registrants for f in load_filings(client, c, since)]
+        for filing_cik, filing in filings:
             if filing["form"] not in FORMS:
                 continue
             accession = filing["accessionNumber"]
@@ -164,11 +172,11 @@ def update_edgar(store: LocalStorage, client: EdgarClient, tickers: list[str], *
                 continue
             available, source = end_of_filing_day(filing["filingDate"]), "END_OF_FILING_DAY"
             if earnings:
-                html = client.get(INDEX_URL.format(cik=cik, nodash=accession.replace("-", ""),
+                html = client.get(INDEX_URL.format(cik=filing_cik, nodash=accession.replace("-", ""),
                                                    accession=accession)).decode("utf-8", "replace")
                 available, source = parse_accepted(html), "INDEX_PAGE"
                 index_lookups += 1
-            rows.append({"ticker": ticker, "cik": cik, "accession": accession, "form": filing["form"],
+            rows.append({"ticker": ticker, "cik": filing_cik, "accession": accession, "form": filing["form"],
                          "filing_date": filing["filingDate"], "report_date": filing.get("reportDate") or None,
                          "items": filing.get("items") or "", "earnings_release": earnings,
                          "available_at": iso(available), "acceptance_source": source,
@@ -176,16 +184,17 @@ def update_edgar(store: LocalStorage, client: EdgarClient, tickers: list[str], *
         rows.sort(key=lambda r: (r["available_at"], r["accession"]))
         if rows:
             store.write_table("edgar", "filings", ticker, rows=rows)
-        try:
-            facts = _facts(client.get_json(FACTS_URL.format(cik=cik)), ticker, cik)
-        except urllib.error.HTTPError as exc:
-            if exc.code != 404:
-                raise
-            facts = []  # no XBRL facts (typical for ETF trusts)
+        facts = []
+        for registrant in registrants:
+            try:
+                facts += _facts(client.get_json(FACTS_URL.format(cik=registrant)), ticker, registrant)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 404:
+                    raise  # 404: no XBRL facts (typical for ETF trusts)
         if facts:
             facts.sort(key=lambda r: (r["metric"], r["period_end"], r["filed"], r["accession"], r["unit"]))
             store.write_table("edgar", "facts", ticker, rows=facts)
-        report[ticker] = {"cik": cik, "filings": len(rows), "earnings_releases": sum(r["earnings_release"] for r in rows),
+        report[ticker] = {"cik": cik, "predecessor_ciks": list(registrants[1:]), "filings": len(rows), "earnings_releases": sum(r["earnings_release"] for r in rows),
                           "index_page_lookups": index_lookups, "fact_rows": len(facts)}
     store.append_event(LedgerEvent(new_id("evt"), "EDGAR_UPDATE", utc_now(), new_id("edgar"), source_id="SEC_EDGAR",
                                    payload={"since": since.isoformat(), "tickers": report,

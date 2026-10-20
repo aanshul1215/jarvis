@@ -7,6 +7,11 @@ from datetime import datetime, timedelta
 
 from .contracts import AssetClass, Mode, RiskDecision, StrategyIntent, new_id, require_utc
 
+# The exchange's quote timestamps and this computer's clock are never exactly in step: the first paper-account probe
+# (2026-10-20) saw a BTC/USD quote stamped 80 ms after the local time it was received. A quote this little ahead is
+# accepted; anything further ahead still blocks, because it would mean a clock or data fault.
+CLOCK_SKEW = timedelta(seconds=2)
+
 
 @dataclass(frozen=True)
 class RiskPolicy:
@@ -78,7 +83,7 @@ class Governor:
                 reasons.append("STRATEGY_NOT_APPROVED")
             if intent.asset_class == AssetClass.CRYPTO and not p.crypto_enabled:
                 reasons.append("CRYPTO_NOT_APPROVED")
-            if now - require_utc(quote_at) > timedelta(seconds=p.max_quote_age_seconds) or quote_at > now:
+            if now - require_utc(quote_at) > timedelta(seconds=p.max_quote_age_seconds) or quote_at > now + CLOCK_SKEW:
                 reasons.append("STALE_OR_FUTURE_QUOTE")
             if spread_bps > p.max_spread_bps or spread_bps < 0:
                 reasons.append("SPREAD_LIMIT")

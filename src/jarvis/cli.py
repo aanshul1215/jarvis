@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
-                 "cost-report", "selector-study"):
+                 "cost-report", "selector-study", "collect"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -125,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
             # 2026-10-19). --sizing fixed exists for diagnostics; every run is still registered as a trial.
             command.add_argument("--sizing", default="volatility", choices=("fixed", "volatility"))
             command.add_argument("--volatility-model", default="garch", help="Phase 5 study winner")
+        if name == "collect":
+            command.add_argument("--universe", required=True, help="universe JSON")
+            command.add_argument("--sources", default="news,reddit,feargreed",
+                                 help="comma-separated: news, reddit, feargreed")
+            command.add_argument("--news-start", help="first date for news (default: day after the newest archived)")
+            command.add_argument("--history", action="store_true", help="feargreed: download the full history")
         if name == "selector-study":
             command.add_argument("--universe", required=True, help="universe JSON; assets with stored bars are used")
             command.add_argument("--strategy", action="append",
@@ -279,6 +285,47 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "macro-update":
         with LocalStorage(_home(args)) as store:
             print(json.dumps(update_macro(store, series=SERIES + PRICE_SERIES), indent=2))
+    elif args.command == "collect":
+        from datetime import datetime, timedelta, timezone
+        import secrets
+        from . import collectors
+        home = _home(args)
+        universe = load_universe(Path(args.universe))
+        sources = {s.strip() for s in args.sources.split(",") if s.strip()}
+        report: dict = {}
+        with LocalStorage(home) as store:
+            if "news" in sources:
+                key, secret = os.environ.get("ALPACA_PAPER_KEY_ID"), os.environ.get("ALPACA_PAPER_SECRET_KEY")
+                if not key or not secret:
+                    report["news"] = {"result": "SKIPPED", "reason": "Alpaca paper keys are not set"}
+                else:
+                    from alpaca.data.historical.news import NewsClient
+                    now = datetime.now(timezone.utc)
+                    if args.news_start:
+                        start = datetime.fromisoformat(args.news_start).replace(tzinfo=timezone.utc)
+                    else:
+                        months = sorted(p.stem for p in (home / "information" / "alpaca_news").glob("*.parquet"))
+                        last = store.read_table("information", "alpaca_news", months[-1]) if months else []
+                        start = (max(datetime.fromisoformat(r["published_at"].replace("Z", "+00:00")) for r in last)
+                                 + timedelta(seconds=1)) if last else datetime(2016, 1, 1, tzinfo=timezone.utc)
+                    report["news"] = collectors.collect_news(store, NewsClient(key, secret), universe, start=start, end=now)
+            if "reddit" in sources:
+                ids = [os.environ.get(v) for v in ("REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USER_AGENT")]
+                if not all(ids):
+                    report["reddit"] = {"result": "SKIPPED",
+                                        "reason": "set REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET and REDDIT_USER_AGENT"}
+                else:
+                    salt_file = home / "config" / "author-hash-salt"
+                    if not salt_file.exists():  # local only: makes author hashes unlinkable outside this machine
+                        salt_file.parent.mkdir(parents=True, exist_ok=True)
+                        salt_file.write_text(secrets.token_hex(16), encoding="utf-8")
+                    client = collectors.RedditClient(*ids)
+                    report["reddit"] = collectors.collect_reddit(store, client, universe,
+                                                                 salt=salt_file.read_text(encoding="utf-8").strip())
+            if "feargreed" in sources:
+                report["feargreed"] = collectors.collect_fear_greed(store, history=args.history)
+            collectors.record_collection(store, report)
+        print(json.dumps(report, indent=2, default=str))
     elif args.command == "selector-study":
         from datetime import datetime, timezone
         from .harness import BacktestSpec

@@ -80,6 +80,11 @@ def test_governor_default_deny_and_limits():
     assert allowed.result == "ALLOW"
     stale = Governor(policy()).assess(intent, state, Mode.SHADOW, now, now - timedelta(minutes=2), 2, "coid", set(), mock=True)
     assert "STALE_OR_FUTURE_QUOTE" in stale.reason_codes
+    # Exchange and local clocks differ slightly (a BTC quote arrived stamped 80 ms ahead): accepted up to 2 seconds.
+    skewed = Governor(policy()).assess(intent, state, Mode.SHADOW, now, now + timedelta(milliseconds=80), 2, "coid", set(), mock=True)
+    assert skewed.result == "ALLOW"
+    ahead = Governor(policy()).assess(intent, state, Mode.SHADOW, now, now + timedelta(seconds=5), 2, "coid", set(), mock=True)
+    assert "STALE_OR_FUTURE_QUOTE" in ahead.reason_codes
     duplicate = Governor(policy()).assess(intent, state, Mode.SHADOW, now, now, 2, "coid", {"coid"}, mock=True)
     assert "DUPLICATE_ORDER" in duplicate.reason_codes
     crypto = StrategyIntent(**{**vars(intent), "asset_id": "BTC/USD", "asset_class": AssetClass.CRYPTO})
