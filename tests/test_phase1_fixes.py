@@ -165,6 +165,24 @@ def test_drawdown_from_stored_peak_blocks_new_risk(tmp_path):
         assert not broker.orders
 
 
+def test_allocated_capital_measures_drawdown_on_jarvis_money_not_the_whole_account(tmp_path):
+    from dataclasses import replace as _replace
+    policy = _replace(_policy(max_quote_age_seconds=60), allocated_capital=10_000.0, max_drawdown=0.15)
+    with LocalStorage(tmp_path / "desk") as store:
+        broker = MockBroker(cash=100_000)
+        engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry(baseline_specs()), Mode.SHADOW)
+        engine.reconcile()
+        assert engine._risk_state().drawdown == 0.0                    # baseline recorded: $100,000 account
+        broker.cash = 98_400                                            # account -1.6% = JARVIS -$1,600 = -16%
+        assert engine._risk_state().drawdown == pytest.approx(0.16)
+        restarted = TradingEngine(store, broker, Governor(policy), StrategyRegistry(baseline_specs()), Mode.SHADOW)
+        assert restarted._risk_state().drawdown == pytest.approx(0.16)  # baseline survives a restart
+        bars = synthetic_bars()
+        restarted.reconcile()
+        result = restarted.process(bars, as_of=bars[-1].available_at, quantity=1)
+        assert any("LOSS_LIMIT" in row.get("reasons", ()) for row in result)
+
+
 def test_daily_loss_limit_blocks_new_risk():
     now = utc_now()
     intent = StrategyIntent("i", "c", "AAPL", AssetClass.EQUITY, "breakout-volume", "1.0.0", "baseline", "v1",

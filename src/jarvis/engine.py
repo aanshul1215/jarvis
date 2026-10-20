@@ -21,6 +21,7 @@ from .strategies import DecisionContext, OpenPosition, StrategyRegistry, select_
 # Shortfalls up to this fraction of the quantity bought are recorded as fee adjustments instead of SAFE.
 CRYPTO_FEE_TOLERANCE = 0.004
 EQUITY_HIGH_WATER = "equity-high-water"
+CAPITAL_BASELINE = "capital-baseline"  # account equity when JARVIS first ran with an allocated capital
 # Simulated brokers allowed to execute in SHADOW mode (mock, soak and replay); never a real broker adapter.
 MOCK_BROKERS = ("MockBroker", "SimBroker", "ReplayBroker")
 # Quantities are sent with at most this many decimals, rounded down so a sell never exceeds the position.
@@ -52,6 +53,7 @@ class TradingEngine:
         self.store, self.broker, self.governor, self.registry, self.mode = store, broker, governor, registry, mode
         self._ready = False
         self._peak: float | None = None  # equity high-water mark, loaded once from the store
+        self._baseline: float | None = None  # account equity at the first run, when capital is allocated
         # Phase 7 strategy selector hooks (None = every strategy at its base size, no trade filter):
         # ``allocation(now)`` -> {strategy_id: size multiplier}; ``entry_filter(strategy_id, snapshot, now)`` -> bool.
         self.allocation = None
@@ -112,19 +114,36 @@ class TradingEngine:
         self._ready = True
 
     def _risk_state(self) -> BrokerState:
-        """Broker state plus drawdown from the stored equity high-water mark (a fraction of peak equity)."""
+        """Broker state plus drawdown from the stored equity high-water mark (a fraction of peak equity).
+
+        With an allocated capital, the equity tracked is JARVIS's own: the allocation plus the account's change since
+        the first run (recorded once as the baseline), so a large paper account cannot hide a large loss.
+        """
         state = self.broker.state()
+        equity = state.equity
+        allocated = getattr(self.governor.policy, "allocated_capital", None) if self.governor.policy else None
+        if allocated:
+            durable = getattr(self.store, "durable", True)
+            if self._baseline is None:
+                try:
+                    self._baseline = float(self.store.load_json(CAPITAL_BASELINE)["account_equity"])
+                except FileNotFoundError:
+                    self._baseline = state.equity
+                    if durable:
+                        self.store.publish_json(CAPITAL_BASELINE, {"account_equity": state.equity,
+                                                                   "allocated_capital": allocated, "at": iso(utc_now())})
+            equity = allocated + (state.equity - self._baseline)
         if self._peak is None:
             try:
                 self._peak = float(self.store.load_json(EQUITY_HIGH_WATER)["equity"])
             except FileNotFoundError:
                 self._peak = 0.0
         peak = self._peak
-        if state.equity > peak:
-            self._peak = peak = state.equity
+        if equity > peak:
+            self._peak = peak = equity
             if getattr(self.store, "durable", True):  # replays keep the peak in memory only
-                self.store.publish_json(EQUITY_HIGH_WATER, {"equity": state.equity, "at": iso(utc_now())})
-        drawdown = 1 - state.equity / peak if peak > 0 else 0.0
+                self.store.publish_json(EQUITY_HIGH_WATER, {"equity": equity, "at": iso(utc_now())})
+        drawdown = 1 - equity / peak if peak > 0 else 0.0
         return replace(state, drawdown=max(state.drawdown, drawdown))
 
     def _record(self, kind: str, correlation_id: str, *, asset_id: str | None = None,

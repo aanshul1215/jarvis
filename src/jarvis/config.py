@@ -13,12 +13,13 @@ from .risk import RiskPolicy
 POLICY_FIELDS = {"version", "approved_assets", "approved_strategies", "max_order_notional",
                  "max_asset_notional", "max_portfolio_notional", "max_daily_loss", "max_drawdown",
                  "max_spread_bps", "max_quote_age_seconds", "paper_enabled", "crypto_enabled", "owner_approved"}
+OPTIONAL_POLICY_FIELDS = {"allocated_capital"}
 
 
 def load_policy(home: Path) -> RiskPolicy:
     path = home / "config" / "owner-policy.json"
     data = json.loads(path.read_text())
-    unknown = set(data) - POLICY_FIELDS
+    unknown = set(data) - POLICY_FIELDS - OPTIONAL_POLICY_FIELDS
     missing = POLICY_FIELDS - set(data)
     if unknown or missing:
         raise ValueError(f"owner policy keys invalid: missing={sorted(missing)}, unknown={sorted(unknown)}")
@@ -34,6 +35,9 @@ def load_policy(home: Path) -> RiskPolicy:
                 "max_drawdown", "max_spread_bps", "max_quote_age_seconds"):
         if type(data[key]) not in (int, float) or not 0 < data[key] < float("inf"):
             raise ValueError(f"invalid risk limit: {key}")
+    if "allocated_capital" in data and (type(data["allocated_capital"]) not in (int, float)
+                                        or not 0 < data["allocated_capital"] < float("inf")):
+        raise ValueError("invalid allocated_capital")
     return RiskPolicy(**{**data, "approved_assets": tuple(data["approved_assets"]),
                          "approved_strategies": tuple(data["approved_strategies"])})
 

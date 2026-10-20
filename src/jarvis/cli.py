@@ -350,8 +350,14 @@ def main(argv: list[str] | None = None) -> int:
         import subprocess
         import sys as _sys
         base = [_sys.executable, "-m", "jarvis", "--home", str(_home(args))]
-        steps = [("collect", base + ["collect", "--universe", args.universe]),
-                 ("score-news", base + ["score-news"])]
+        from datetime import datetime as _dt
+        steps = [("macro-update", base + ["macro-update"])]
+        if os.environ.get("JARVIS_SEC_USER_AGENT"):  # new 8-K earnings releases for the earnings strategy
+            steps.append(("edgar-update", base + ["edgar-update", "--universe", args.universe]))
+        if _dt.now().weekday() == 0:  # the Fed and BLS calendars change rarely: refresh on Mondays
+            steps.append(("calendar-update", base + ["calendar-update"]))
+        steps += [("collect", base + ["collect", "--universe", args.universe]),
+                  ("score-news", base + ["score-news"])]
         if args.enable_orders:
             steps.append(("paper", base + ["paper", "--once", "--enable-orders"]))
         summary = []

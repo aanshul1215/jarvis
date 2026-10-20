@@ -28,6 +28,10 @@ class RiskPolicy:
     paper_enabled: bool = False
     crypto_enabled: bool = False
     owner_approved: bool = False
+    # Capital the owner assigns to JARVIS when the broker account holds more (the Alpaca paper account starts at
+    # $100,000). The drawdown limit is then measured on this amount plus JARVIS's own gains and losses since it
+    # started, not on the whole account. None = the whole account.
+    allocated_capital: float | None = None
 
     def __post_init__(self) -> None:
         numeric = (self.max_order_notional, self.max_asset_notional, self.max_portfolio_notional,
