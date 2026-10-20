@@ -190,7 +190,7 @@ within a group. *n* is the number of forecast origins.
 
 ## Results — `bars` source (the 27-stock/ETF universe, Alpaca daily bars 2016–2026), run 2026-10-20
 
-Registry entries 7–9 (development) and 10–12 (holdout), with the same version and rules as the `fred` study. This is
+Registry entries 7–9 (development) and 10–15 (holdout: each is a STARTED claim followed by its result), with the same version and rules as the `fred` study. This is
 the run that decides for the traded assets. All series are stocks/ETFs: crypto bars on Alpaca start only in 2021.
 
 | Model | Development (origins from 2020 because of the 1,000-return window) | Holdout 2024-01 to 2026-10 | Decision |
