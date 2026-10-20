@@ -64,8 +64,31 @@ If no stage passes, the desk runs **equal weight**. The workflow calls this a le
 
 The chosen configuration's schedule must be recomputed each month from sleeve replays on the stored bars, and read by the paper desk. That job and its tests belong to Phase 8. Until a stage passes, the paper desk runs every strategy at multiplier 1.
 
-## Results
+## Results — development 2016-03-01 to 2023-12-31 (run 2026-10-20)
 
-None yet. **BLOCKED — needs the Alpaca back-fill** (`jarvis backfill`, then `jarvis selector-study --universe …`).
-On synthetic random-walk data the pipeline completes, no stage passes and equal weight is kept
-(`test_selector_study_on_noise_keeps_equal_weight_and_enforces_the_holdout_order`). That is not market evidence.
+Registry entry 1 in `selector_studies.jsonl`, code 6162e2a.
+- **Desk:** all six registered strategies on the 27-stock/ETF universe, with GARCH sizing, trading together through the real code.
+- **Market proxy:** SPY.
+
+| Stage | Candidate vs incumbent | Return / yr | Sharpe | Worst drawdown | Bootstrap p | Result |
+|---|---|---|---|---|---|---|
+| Baseline | Equal weight (all strategies at multiplier 1) | 10.5% | 1.25 | -14.2% | — | incumbent |
+| 1 | Regime lookup | 11.1% | 1.24 | -16.3% | 0.27 | FAILED (not significant; larger drawdown) |
+| 2 | Equal weight + meta-label filter (30 yearly models) | 9.4% | 1.15 | -15.3% | 0.91 | FAILED (not significant; larger drawdown) |
+| 3 | Contextual bandit | 11.2% | 1.26 | -18.9% | 0.22 | FAILED (not significant; larger drawdown) |
+
+**Selected: equal weight.** No stage beat it, which matches the expectation stated before the run (DeMiguel et al.). The
+regime lookup and the bandit earned slightly more, but with larger drawdowns and nothing close to significance. The
+meta-label filter made results worse.
+
+**For comparison** (from the strategy register), over the same period:
+- the six strategies run alone: 0.1–8.8% a year, Sharpe 0.09–1.11;
+- holding the 27 assets equally: 18.1% a year, Sharpe 1.09, worst drawdown -30%.
+
+**The combined desk:**
+- It diversifies well: its Sharpe of 1.25 is above every single strategy's and above the benchmark's. Its drawdown is less than half the benchmark's.
+- It earns less than holding everything, because much of the capital sits idle (see the capital-use note in `docs/06-strategies`).
+- This is a description, not a test: the desk as a whole was not pre-registered as a strategy against the benchmark.
+
+**Holdout:** development kept equal weight, so there is no selector configuration to confirm. Running the holdout
+would only record the equal-weight desk's 2024+ performance, once.
