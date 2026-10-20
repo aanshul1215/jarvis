@@ -32,6 +32,21 @@ Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c
 | Event calendars (FOMC decisions, CPI and jobs releases) | TESTED LOCALLY + LIVE RUN | Live build: 381 events 2016â€“2027 (8 FOMC, 12 CPI, 12 jobs per year); 2020 emergency meetings stored as unscheduled, the cancelled 17â€“18 March 2020 meeting never counts as upcoming |
 | Breadth universe, news/social collectors | NOT STARTED | Collectors need source decisions (Reddit app credentials; Alpaca news once keys exist) |
 
+## Phase 3 evaluation harness â€” 2026-10-19
+
+| Item | Status | Evidence |
+|---|---|---|
+| Same code path: real PaperDesk, engine, strategies and Governor replayed on stored history | TESTED LOCALLY (SYNTHETIC DATA) | `replay.py` (ReplayClock, ReplayData, ReplayBroker), `harness.py` |
+| Point-in-time guard: every replay read refuses bars not yet available; violations abort the evaluation | TESTED | `test_a_data_bug_that_leaks_the_future_aborts_the_evaluation`, `test_replay_fills_at_the_next_open_with_costs_and_honours_limits` |
+| Fills at the next bar's open, limit orders honoured, costs per side (equity 5 bps; crypto 25 bps fee + 5 bps spread), doubled-cost stress run | TESTED | as above |
+| Benchmarks: equal-weight buy-and-hold, equal-weight monthly rebalance (with costs), cash at the 3-month T-bill rate (FRED) | TESTED | harness runs |
+| Metrics: total return, CAGR, volatility, Sharpe, Sortino, max drawdown, 5% expected shortfall, turnover, exposure, beta/alpha to benchmark, trade stats | TESTED | `metrics.py` |
+| Gate: leak alarms, â‰¥30 trades, block-bootstrap significance vs benchmark with Bonferroni correction across registered trials, â‰¥60% of years beating the benchmark, positive with doubled costs | TESTED | random entry fails (two seeds; second seed faces a stricter bar) |
+| Future-poisoning leak test (signals and order inputs before a cut-off must not change when later bars are scrambled) | TESTED | Planted v1-style leak (Sharpe â‰ˆ 2.2, below the statistical alarm) flagged; honest run of the same strategy passes |
+| Append-only, hash-chained experiment registry; holdout usable once per strategy configuration | TESTED | `test_holdout_may_be_evaluated_once` |
+| Performance | MEASURED | 6-month replay 20.2 s â†’ 0.7 s after removing a per-cycle journal re-read; full evaluation of 2.3 years Ã— 4 stocks (base, doubled costs, benchmarks, 8 poisoning cut-offs) â‰ˆ 20â€“35 s |
+| Real-data evaluation | BLOCKED â€” NEEDS ALPACA PAPER KEYS | `jarvis backtest --universe ... --strategy ...` runs once `backfill` has data |
+
 ## Implementation dependency map — 2026-10-18
 
 **Development branch:** `feature/jarvis-v1-implementation`, based on `origin/branch-3` at `438c778f45d679fe000720a7741b8ae743dc4bfe`. Working tree was clean at branch creation. Historical research and `legacy-v1/` remain references; no autonomous runtime existed at the baseline.
