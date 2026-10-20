@@ -146,3 +146,21 @@ def test_replay_fills_at_the_next_open_with_costs_and_honours_limits():
         clock.now = day - timedelta(days=1)
         data.visible = lambda symbol: bars                                       # simulate a bug serving the future
         data.latest_quote("AAA", AssetClass.EQUITY)
+
+
+def test_core_satellite_overlay_holds_idle_capital_in_the_basket():
+    from datetime import date
+    from jarvis.harness import core_satellite
+    from jarvis.replay import CostModel
+    days = [date(2020, 1, d) for d in range(1, 8)]
+    basket = [(d, 100 * 1.01 ** i) for i, d in enumerate(days)]                  # +1% a day
+    idle = {"series": [(d, 10_000.0) for d in days], "exposure_series": [(d, 0.0) for d in days], "average_exposure": 0.0}
+    out = core_satellite(idle, basket, CostModel())
+    assert out["series"][-1][1] == pytest.approx(10_000 * 1.01 ** 6)            # all idle: exactly the basket
+    busy = {"series": [(d, 10_000 * 1.02 ** i) for i, d in enumerate(days)], "exposure_series": [(d, 1.0) for d in days],
+            "average_exposure": 1.0}
+    assert core_satellite(busy, basket, CostModel())["series"][-1][1] == pytest.approx(10_000 * 1.02 ** 6)
+    half = {"series": [(d, 10_000.0) for d in days], "exposure_series": [(d, 0.5 if i % 2 else 0.0) for i, d in enumerate(days)],
+            "average_exposure": 0.25}
+    charged = core_satellite(half, [(d, 100.0) for d in days], CostModel())["series"][-1][1]
+    assert charged == pytest.approx(10_000 * (1 - 0.5 * 0.0005) ** 6)            # each switch pays 5 bps on half

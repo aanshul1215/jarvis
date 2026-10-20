@@ -167,3 +167,24 @@ Benchmarks over the same period:
   - This was known when the gate was written. Changing the sizing or the comparison now would be a new, separately counted trial, and it is listed as an open decision for the owner, not applied after the fact.
 - **The universe favours holding:** it was chosen in 2026 and includes NVDA, META and TSLA, so it flatters buy and hold (survivorship bias), which raises the bar for every strategy.
 - The holdout (2024 onward) was not used: no strategy passed development.
+
+## Pre-registration v1.1 — core-satellite (owner decision 2026-10-20, before any v1.1 run)
+
+**Why:** in the development results above, most capital sat idle ($1,000 entries on a $10,000 account). The owner chose
+to test the strategies in a way that uses the whole account. The v1.0 results stand unchanged.
+
+**Rule (same for every strategy, nothing tuned per strategy):**
+- Idle capital is held in the equal-weight basket of the universe (the benchmark itself, rebalanced monthly), not in cash.
+- Each strategy's positions are paid for out of that basket.
+- The account is therefore always fully invested. The gate asks one question: do the strategy's holdings beat the basket they displace?
+- Daily return = strategy return + yesterday's idle share × basket return − the cost of moving the change in the idle share in or out of the basket (5 bps per side; doubled in the stress test).
+- Implemented as `core_satellite()` in `src/jarvis/harness.py`, with `backtest --overlay core_satellite`.
+
+**What stays the same:**
+- The same strategies (`@1.0.0` rules), universe, period (2016-03-01 to 2023-12-31), GARCH sizing, costs, gate and leak tests.
+
+**Trials:**
+- Each strategy's v1.1 run is its **second** registered run, so its significance threshold is 0.05 ÷ 2 = 0.025.
+- The random control is run too: with no skill, it should land close to the basket and fail.
+
+**Expectation:** a strategy with no stock-picking skill ends up near the benchmark minus its extra trading costs, and fails. Passing requires the strategy's chosen positions to beat the basket, consistently and after doubled costs.

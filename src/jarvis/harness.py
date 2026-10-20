@@ -65,12 +65,14 @@ class BacktestSpec:
     seed: int = 0
     sizing: str = "fixed"              # "volatility": order size scaled by the Phase 5 forecast (daily bars only)
     volatility_model: str = "rolling20"
+    overlay: str = "none"              # "core_satellite": idle capital held in the equal-weight basket (v1.1)
 
     def fingerprint(self) -> str:
         """Identifies the strategy configuration (not the period), for trial counting and the holdout rule."""
         key = {"strategies": sorted(self.strategy_versions), "assets": sorted(a for a, _ in self.assets),
                "dataset": self.dataset, "timeframe": self.timeframe, "order_notional": self.order_notional,
-               "seed": self.seed, "sizing": self.sizing, "volatility_model": self.volatility_model}
+               "seed": self.seed, "sizing": self.sizing, "volatility_model": self.volatility_model,
+               **({"overlay": self.overlay} if self.overlay != "none" else {})}
         return _hash(_canonical(key))[:20]
 
 
@@ -155,7 +157,8 @@ def run_backtest(data_store: LocalStorage, spec: BacktestSpec, *, data_cls=Repla
     if data.lookahead_violations:  # the runner turns errors into SAFE; a look-ahead must abort the evaluation
         raise LookAheadError(data.lookahead_violations[0])
     series = daily_series(points)
-    return {"series": series, "candidates": candidates, "trade_records": trade_records(events, spec.costs),
+    exposure_by_day = dict(daily_series([(m, e) for (m, _), e in zip(points, exposure)]))
+    return {"exposure_series": sorted(exposure_by_day.items()),"series": series, "candidates": candidates, "trade_records": trade_records(events, spec.costs),
             "average_exposure": float(np.mean(exposure)) if exposure else 0.0, "metrics": summarize(series),
             "trades": trade_stats(outcomes),
             "fills": len(broker.fills), "stopped": stopped,
@@ -245,6 +248,31 @@ def benchmarks(data_store: LocalStorage, spec: BacktestSpec) -> dict[str, list[t
             series.append((day, value))
         result["cash_tbill"] = series
     return result
+
+
+def core_satellite(result: dict, basket: list[tuple[date, float]], costs: CostModel) -> dict:
+    """The strategy run with its idle capital held in the equal-weight basket instead of cash (STRATEGY_REGISTER v1.1).
+
+    Each day: return = strategy return + yesterday's idle share x basket return - the cost of moving the change in
+    the idle share in or out of the basket (equity half-spread and fee per side, at ``costs``). Positions are paid
+    for out of the basket, so the account is always fully invested and the gate asks whether the strategy's holdings
+    beat the basket they displace. The replay's idle cash earns nothing, so nothing is counted twice.
+    """
+    strategy, exposure, bench = dict(result["series"]), dict(result["exposure_series"]), dict(basket)
+    days = [d for d in sorted(strategy) if d in bench and d in exposure]
+    side_cost = costs.half_spread(AssetClass.EQUITY) + costs.fee(AssetClass.EQUITY)
+    value, series = strategy[days[0]] if days else 0.0, []
+    for i, day in enumerate(days):
+        if i:
+            prev = days[i - 1]
+            idle_before = min(1.0, max(0.0, 1 - exposure[prev]))
+            idle_now = min(1.0, max(0.0, 1 - exposure[day]))
+            r = (strategy[day] / strategy[prev] - 1) + idle_before * (bench[day] / bench[prev] - 1) \
+                - abs(idle_now - idle_before) * side_cost
+            value *= 1 + r
+        series.append((day, value))
+    return {**result, "series": series, "metrics": summarize(series), "average_exposure": 1.0,
+            "strategy_exposure": result["average_exposure"]}
 
 
 def _aligned_excess(strategy: list[tuple[date, float]], benchmark: list[tuple[date, float]]) -> tuple[np.ndarray, list[date]]:
@@ -375,7 +403,7 @@ def _spec_record(spec: BacktestSpec) -> dict:
             "dataset": spec.dataset, "timeframe": spec.timeframe, "start": iso(spec.start), "end": iso(spec.end),
             "split": spec.split, "initial_cash": spec.initial_cash, "order_notional": spec.order_notional,
             "costs": spec.costs.as_dict(), "seed": spec.seed, "sizing": spec.sizing,
-            "volatility_model": spec.volatility_model}
+            "volatility_model": spec.volatility_model, "overlay": spec.overlay}
 
 
 def evaluate(data_home: Path, spec: BacktestSpec, *, data_cls=ReplayData, specs=None) -> dict:
@@ -395,6 +423,12 @@ def evaluate(data_home: Path, spec: BacktestSpec, *, data_cls=ReplayData, specs=
                                     data_cls=data_cls, specs=specs)
             bench = benchmarks(store, spec)
             poisoning = future_poisoning_check(store, spec, data_cls=data_cls, specs=specs)
+        if spec.overlay == "core_satellite":
+            base = core_satellite(base, bench["equal_weight_monthly"], spec.costs)
+            stressed = core_satellite(stressed, bench["equal_weight_monthly"],
+                                      replace(spec.costs, multiplier=spec.costs.multiplier * 2))
+        elif spec.overlay != "none":
+            raise ValueError(f"unknown overlay {spec.overlay}")
         trials = registry.trials(spec.strategy_versions) + 1
         gate = evaluate_gate(base, stressed, bench, trials=trials, poisoning=poisoning)
         record.update({"status": "COMPLETED", "metrics": base["metrics"], "trades": base["trades"],

@@ -125,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
             # 2026-10-19). --sizing fixed exists for diagnostics; every run is still registered as a trial.
             command.add_argument("--sizing", default="volatility", choices=("fixed", "volatility"))
             command.add_argument("--volatility-model", default="garch", help="Phase 5 study winner")
+            command.add_argument("--overlay", default="none", choices=("none", "core_satellite"),
+                                 help="core_satellite: idle capital held in the equal-weight basket (register v1.1)")
         if name == "daily":
             command.add_argument("--universe", required=True, help="universe JSON")
             command.add_argument("--enable-orders", action="store_true",
@@ -258,7 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         when = lambda text: datetime.fromisoformat(text).replace(tzinfo=timezone.utc)  # noqa: E731
         spec = BacktestSpec(tuple(args.strategy), assets, args.dataset, args.timeframe, when(args.start),
                             when(args.end), split=args.split, initial_cash=args.cash, order_notional=args.notional,
-                            seed=args.seed, sizing=args.sizing, volatility_model=args.volatility_model)
+                            seed=args.seed, sizing=args.sizing, volatility_model=args.volatility_model,
+                            overlay=args.overlay)
         record = evaluate(home, spec)
         print(json.dumps({k: record[k] for k in ("seq", "fingerprint", "status", "metrics", "trades", "turnover",
                                                  "average_exposure", "benchmarks", "gate")}, indent=2, default=str))
