@@ -188,6 +188,21 @@ within a group. *n* is the number of forecast origins.
 - Mean shrinkage intensity: 0.24.
 - Reported only: the long-only minimum-variance portfolio had realised volatility of 19.9% (sample/shrunk) and 21.0% (diagonal), against 37.2% for equal weight (development).
 
+## Results — `bars` source (the 27-stock/ETF universe, Alpaca daily bars 2016–2026), run 2026-10-20
+
+Registry entries 7–9 (development) and 10–12 (holdout), with the same version and rules as the `fred` study. This is
+the run that decides for the traded assets. All series are stocks/ETFs: crypto bars on Alpaca start only in 2021.
+
+| Model | Development (origins from 2020 because of the 1,000-return window) | Holdout 2024-01 to 2026-10 | Decision |
+|---|---|---|---|
+| Volatility, h = 5 | `garch` gain 0.034, p = 0.013; `ewma` 0.032, p = 0.003; `har` −0.098 (worse) | `garch` 0.078, p = 1.2e-6; `har` and `ewma` also pass | **GARCH: confirmed on both sources and both splits** |
+| Regime | No candidate beats `sma200` or `none` (best p = 0.23); stress ablation −0.024 | Nothing passes (best `hmm2` vs `none`, p = 0.09); stress −0.041 | **None**, as with `fred` |
+| Correlation | `sample` gain 1.015, `shrunk` 1.010, both p = 0.033 (threshold 0.025); 83 periods | Both about 0.415, p = 0.049–0.050; 33 periods | **`diagonal` by the rule.** Every run improved the forecast and roughly halved minimum-variance volatility (development 5.9% vs 9.2%; holdout 4.6% vs 7.0%), but none reached the pre-registered significance |
+
+**The correlation result is an open owner decision.**
+- Using the correlation model only to cap total risk (a safety limit that can block trades, never add them) is a different use from the forecasting test here.
+- Adopting it would be a decision taken knowingly after seeing these results. It is recorded here, not applied silently.
+
 ### Transaction costs
 
 BLOCKED: there are no paper fills yet. `cost-report` reports INSUFFICIENT_DATA until 50 fills exist.
