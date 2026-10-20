@@ -102,6 +102,30 @@ Evidence tags follow the rest of the repository: **FETCHED** (the source was ope
 - **Caveat:** about 10 stocks × 4 releases a year gives few trades; the 30-trade minimum may not be reached.
 - **Would prove it wrong:** fails the gate; too few trades is recorded as inconclusive, not as a pass.
 
+### 7. `news-sentiment@1.0.0` — unusually positive news (added 2026-10-20, Phase 6)
+
+Registered before any headline had been scored: the news archive had been downloaded, but no sentiment number
+existed yet.
+
+- **Bet:** a burst of unusually positive news about an asset is followed by a few days of continued gains, because
+  news is absorbed into prices gradually.
+- **Data:**
+  - Alpaca/Benzinga headlines for the universe, from 2016. Each counts from its creation time plus one minute, or from its last update if it was edited more than ten minutes later.
+  - Each headline is scored by FinBERT (`ProsusAI/finbert`, revision `0bc2ac10`), run locally: P(positive) − P(negative).
+- **Signal:**
+  - The mean score of headlines that became available in the last 24 hours, compared with the asset's own previous 60 days, in standard errors.
+  - This needs at least 3 recent headlines and 20 baseline headlines.
+- **Entry:** z ≥ 2. **Exit:** z ≤ −2 (`SENTIMENT_TURNED`); maximum 5 bars. **Stop:** 2 ATR below entry.
+- **Evidence:**
+  - Tetlock (2007): media pessimism predicts short-term market declines (RECALLED).
+  - Tetlock, Saar-Tsechansky & Macskassy (2008): negative words in firm news predict earnings and returns (RECALLED).
+  - Both studies used the *negative* side. A long-only test of the positive side is a weaker version of the idea.
+- **Caveats:**
+  - The FinBERT licence is non-commercial (CC BY-NC-SA 4.0). Research and paper trading only, until it is replaced or cleared.
+  - Headline coverage is uneven: more for large stocks, little for sector ETFs, so expect few signals on ETFs.
+  - Crypto history in Alpaca bars starts only in 2021.
+- **Would prove it wrong:** fails the gate; or too few trades (recorded as inconclusive).
+
 ### Control: `random-entry@1.0.0`
 
 - Enters on a seeded coin flip (5% of bars), exits after 3 bars. Exists only so the gate can be shown to reject
