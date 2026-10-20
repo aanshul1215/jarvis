@@ -13,6 +13,11 @@ Sources (owner decision 2026-10-20):
   only as a salted hash. Requires the owner's Reddit app credentials and acceptance of Reddit's API terms.
 - **Crypto Fear & Greed index** (alternative.me, daily since 2018): the value stamped for day D is treated as known
   from D + 1 day, 00:00 UTC (conservative; the publisher updates around the day change).
+- **Bluesky** (public posts found by searching each asset's cashtag, plus "bitcoin"/"ethereum"): post search needs a
+  logged-in account (checked 2026-10-20: unauthenticated search returns 403), so the collector signs in with an app
+  password, which the owner can revoke at any time. Forward archive only; ``available_at`` is when this collector
+  first saw the post; author identifiers are stored only as a salted hash. Posts deleted later stay in the private
+  archive; Bluesky asks apps to honour deletions, so the archive is never published.
 
 Archives live in ``JARVIS_HOME/information/<source>/<YYYY-MM>.parquet``, de-duplicated by item id; the first
 observation of an item is never overwritten.
@@ -212,6 +217,85 @@ def collect_reddit(store: LocalStorage, client: RedditClient, universe: list[Uni
         for key in ("received", "added", "months"):
             report[key] += result[key]
         time.sleep(1)  # far inside Reddit's published limit; be a polite client
+    return report
+
+
+# --- Bluesky -------------------------------------------------------------------------------------------------------
+
+class BlueskyClient:
+    """Signs in with an app password and searches public posts (read-only)."""
+
+    SERVICE = "https://bsky.social/xrpc"
+
+    def __init__(self, handle: str, app_password: str, *, fetch=None):
+        self.handle, self.app_password = handle, app_password
+        self.fetch = fetch or self._http
+        self._token = None
+
+    def _http(self, request: urllib.request.Request) -> bytes:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed https host
+            return response.read()
+
+    def _session(self) -> str:
+        if self._token is None:
+            body = json.dumps({"identifier": self.handle, "password": self.app_password}).encode()
+            request = urllib.request.Request(f"{self.SERVICE}/com.atproto.server.createSession", data=body,
+                                             method="POST", headers={"Content-Type": "application/json"})
+            payload = json.loads(self.fetch(request))
+            if "accessJwt" not in payload:
+                raise PermissionError(f"Bluesky refused the app password: {payload.get('error', 'unknown error')}")
+            self._token = payload["accessJwt"]
+        return self._token
+
+    def search(self, query: str, limit: int = 100) -> list[dict]:
+        params = urllib.parse.urlencode({"q": query, "limit": limit, "sort": "latest"})
+        request = urllib.request.Request(f"{self.SERVICE}/app.bsky.feed.searchPosts?{params}",
+                                         headers={"Authorization": f"Bearer {self._session()}"})
+        return json.loads(self.fetch(request)).get("posts", [])
+
+
+def bluesky_queries(universe: list[UniverseAsset]) -> dict[str, str]:
+    """Search text per asset: the cashtag, and for crypto also the common name."""
+    queries = {}
+    for asset in universe:
+        if asset.asset_class == AssetClass.CRYPTO:
+            base = asset.symbol.split("/")[0]
+            queries[f"${base}"] = asset.symbol
+            for word in CRYPTO_WORDS.get(asset.symbol, ())[:1]:
+                queries[word] = asset.symbol
+        else:
+            queries[f"${asset.symbol}"] = asset.symbol
+    return queries
+
+
+def bluesky_rows(posts: Iterable[dict], universe: list[UniverseAsset], queried: str, seen_at: datetime,
+                 salt: str) -> list[dict]:
+    rows = []
+    for post in posts:
+        record = post.get("record") or {}
+        text = record.get("text") or ""
+        indexed = parse_utc(post.get("indexedAt") or record.get("createdAt"))
+        symbols = sorted(set(mentions(text, universe)) | {queried})
+        did = (post.get("author") or {}).get("did", "")
+        rows.append({"item_id": f"bluesky-{post['cid']}", "source": "bluesky", "published_at": iso(min(indexed, seen_at)),
+                     "available_at": iso(seen_at), "first_seen_at": iso(seen_at), "revised_after_publication": False,
+                     "symbols": ",".join(symbols), "title": text[:300], "text": text[:REDDIT_TEXT_LIMIT],
+                     "author": hashlib.sha256(f"{salt}:{did}".encode()).hexdigest()[:16] if did else "",
+                     "url": post.get("uri", ""), "provider": "bluesky",
+                     "score_at_first_seen": int(post.get("likeCount") or 0),
+                     "comments_at_first_seen": int(post.get("replyCount") or 0)})
+    return rows
+
+
+def collect_bluesky(store: LocalStorage, client: BlueskyClient, universe: list[UniverseAsset], *, salt: str,
+                    now: Callable[[], datetime] = utc_now) -> dict:
+    report = {"received": 0, "added": 0, "months": 0, "by_query": {}}
+    for query, asset in bluesky_queries(universe).items():
+        result = archive(store, "bluesky", bluesky_rows(client.search(query), universe, asset, now(), salt))
+        report["by_query"][query] = result["added"]
+        for key in ("received", "added", "months"):
+            report[key] += result[key]
+        time.sleep(0.5)  # polite pacing, far inside Bluesky's published limits
     return report
 
 

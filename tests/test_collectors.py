@@ -94,3 +94,33 @@ def test_fear_greed_is_known_only_the_next_day(tmp_path):
         row = store.read_table("information", "fear_greed", "2026-10")[0]
     assert row["published_at"] == "2026-10-20T00:00:00Z" and row["available_at"] == "2026-10-21T00:00:00Z"
     assert row["value"] == 55
+
+
+class FakeBluesky:
+    def __init__(self):
+        self.requests = []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        if request.full_url.endswith("createSession"):
+            return json.dumps({"accessJwt": "jwt", "did": "did:plc:me"}).encode()
+        post = {"uri": "at://did:plc:abc/app.bsky.feed.post/1", "cid": "bafy1", "author": {"did": "did:plc:abc", "handle": "x.bsky.social"},
+                "record": {"text": "Loading up on $AAPL and some bitcoin", "createdAt": "2026-10-20T14:00:00Z"},
+                "indexedAt": "2026-10-20T14:00:05Z", "likeCount": 4, "replyCount": 1}
+        return json.dumps({"posts": [post]}).encode()
+
+
+def test_bluesky_collector_signs_in_with_an_app_password_and_archives_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(collectors.time, "sleep", lambda s: None)
+    fake = FakeBluesky()
+    client = collectors.BlueskyClient("me.bsky.social", "app-pass", fetch=fake)
+    assert collectors.bluesky_queries(UNIVERSE) == {"$AAPL": "AAPL", "$SPY": "SPY", "$BTC": "BTC/USD", "bitcoin": "BTC/USD"}
+    with LocalStorage(tmp_path / "home") as store:
+        report = collectors.collect_bluesky(store, client, UNIVERSE, salt="pepper", now=lambda: NOW)
+        rows = store.read_table("information", "bluesky", "2026-10")
+    assert report["received"] == 4 and report["added"] == 1                 # the same post found by four searches
+    row = rows[0]
+    assert row["symbols"] == "AAPL,BTC/USD" and row["available_at"] == "2026-10-20T15:00:00Z"
+    assert row["author"] != "did:plc:abc" and "x.bsky.social" not in json.dumps(row)
+    sessions = [r for r in fake.requests if r.full_url.endswith("createSession")]
+    assert len(sessions) == 1 and all(r.get_method() == "GET" for r in fake.requests if r not in sessions)

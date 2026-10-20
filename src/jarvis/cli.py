@@ -131,8 +131,8 @@ def main(argv: list[str] | None = None) -> int:
                                  help="after collecting and scoring, run one guarded paper cycle that may place orders")
         if name == "collect":
             command.add_argument("--universe", required=True, help="universe JSON")
-            command.add_argument("--sources", default="news,reddit,feargreed",
-                                 help="comma-separated: news, reddit, feargreed")
+            command.add_argument("--sources", default="news,reddit,bluesky,feargreed",
+                                 help="comma-separated: news, reddit, bluesky, feargreed")
             command.add_argument("--news-start", help="first date for news (default: day after the newest archived)")
             command.add_argument("--history", action="store_true", help="feargreed: download the full history")
         if name == "selector-study":
@@ -314,16 +314,25 @@ def main(argv: list[str] | None = None) -> int:
                         start = (max(datetime.fromisoformat(r["published_at"].replace("Z", "+00:00")) for r in last)
                                  + timedelta(seconds=1)) if last else datetime(2016, 1, 1, tzinfo=timezone.utc)
                     report["news"] = collectors.collect_news(store, NewsClient(key, secret), universe, start=start, end=now)
+            salt_file = home / "config" / "author-hash-salt"
+            if ("reddit" in sources or "bluesky" in sources) and not salt_file.exists():
+                # Local only: makes stored author hashes impossible to link to anything outside this machine.
+                salt_file.parent.mkdir(parents=True, exist_ok=True)
+                salt_file.write_text(secrets.token_hex(16), encoding="utf-8")
+            if "bluesky" in sources:
+                handle, password = os.environ.get("BLUESKY_HANDLE"), os.environ.get("BLUESKY_APP_PASSWORD")
+                if not handle or not password:
+                    report["bluesky"] = {"result": "SKIPPED", "reason": "set BLUESKY_HANDLE and BLUESKY_APP_PASSWORD"}
+                else:
+                    report["bluesky"] = collectors.collect_bluesky(
+                        store, collectors.BlueskyClient(handle, password), universe,
+                        salt=salt_file.read_text(encoding="utf-8").strip())
             if "reddit" in sources:
                 ids = [os.environ.get(v) for v in ("REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USER_AGENT")]
                 if not all(ids):
                     report["reddit"] = {"result": "SKIPPED",
                                         "reason": "set REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET and REDDIT_USER_AGENT"}
                 else:
-                    salt_file = home / "config" / "author-hash-salt"
-                    if not salt_file.exists():  # local only: makes author hashes unlinkable outside this machine
-                        salt_file.parent.mkdir(parents=True, exist_ok=True)
-                        salt_file.write_text(secrets.token_hex(16), encoding="utf-8")
                     client = collectors.RedditClient(*ids)
                     report["reddit"] = collectors.collect_reddit(store, client, universe,
                                                                  salt=salt_file.read_text(encoding="utf-8").strip())
