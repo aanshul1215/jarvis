@@ -46,6 +46,9 @@ CONCEPTS = {  # stored name -> us-gaap / dei concepts tried in order (companies 
     # Amazon tags it PaymentsToAcquireProductiveAssets; most others PaymentsToAcquirePropertyPlantAndEquipment.
     "capex": ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"),
 }
+# Metrics whose companies switched tag over the years (Amazon reported capex as PaymentsToAcquirePropertyPlantAndEquipment
+# until 2017, then PaymentsToAcquireProductiveAssets): keep every listed concept, not just the first one found.
+MERGED_CONCEPTS = {"capex"}
 _ACCEPTED = re.compile(r'Accepted</div>\s*<div class="info">(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})</div>')
 
 
@@ -140,7 +143,8 @@ def _facts(document: dict, ticker: str, cik: int) -> list[dict]:
                                  "value": float(v["val"]), "fiscal_year": v.get("fy"), "fiscal_period": v.get("fp"),
                                  "form": v.get("form"), "accession": v["accn"], "filed": v["filed"],
                                  "available_at": iso(end_of_filing_day(v["filed"]))})
-            break  # first concept that exists wins for this metric
+            if name not in MERGED_CONCEPTS:
+                break  # first concept that exists wins for this metric
     return rows
 
 

@@ -28,6 +28,7 @@ from .sleeves import EQUITY_RISK, HYPERSCALERS, THEME_BASKET, Context, _lag_rati
 FEATURES = ("spy_trend", "spy_vol_shift", "vix", "vix_term", "credit_rel", "baa_change", "rates_change", "breadth",
             "dispersion", "crypto_trend", "theme_lead", "capex_growth")
 MIN_STANDARDISE = 252
+STALE_DAYS = 200  # a quarter ends; its 10-Q follows within about 45 days (90 for a 10-K)
 
 
 def quarters_known(rows: list[tuple[datetime, date, date, float]], moment: datetime) -> dict[date, float]:
@@ -76,7 +77,7 @@ def capex_growth(store: LocalStorage, dates: list[date]) -> np.ndarray:
                 break
             latest = max(known)
             prior = [e for e in known if abs((latest - e).days - 365) <= 20]
-            if not prior:
+            if not prior or (d - latest).days > STALE_DAYS:  # a company with no recent quarter makes it unknown
                 complete = False
                 break
             now_sum += known[latest]
