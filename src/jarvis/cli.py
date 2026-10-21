@@ -97,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
-                 "cost-report", "selector-study", "collect", "score-news", "daily"):
+                 "cost-report", "selector-study", "collect", "score-news", "daily", "portfolio-study",
+                 "portfolio-targets", "portfolio-paper"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -127,6 +128,12 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--volatility-model", default="garch", help="Phase 5 study winner")
             command.add_argument("--overlay", default="none", choices=("none", "core_satellite"),
                                  help="core_satellite: idle capital held in the equal-weight basket (register v1.1)")
+        if name in ("portfolio-study", "portfolio-targets", "portfolio-paper"):
+            command.add_argument("--universe", required=True, help="universe JSON")
+        if name == "portfolio-study":
+            command.add_argument("--split", default="DEVELOPMENT", choices=("DEVELOPMENT", "CONFIRMATION", "HOLDOUT"))
+        if name == "portfolio-paper":
+            command.add_argument("--enable-orders", action="store_true", help="required to place paper orders")
         if name == "daily":
             command.add_argument("--universe", required=True, help="universe JSON")
             command.add_argument("--enable-orders", action="store_true",
@@ -360,10 +367,12 @@ def main(argv: list[str] | None = None) -> int:
             steps.append(("edgar-update", base + ["edgar-update", "--universe", args.universe]))
         if _dt.now().weekday() == 0:  # the Fed and BLS calendars change rarely: refresh on Mondays
             steps.append(("calendar-update", base + ["calendar-update"]))
-        steps += [("collect", base + ["collect", "--universe", args.universe]),
+        start = (_dt.now() - __import__("datetime").timedelta(days=10)).date().isoformat()
+        steps += [("backfill", base + ["backfill", "--universe", args.universe, "--start", start, "--timeframes", "1Day"]),
+                  ("collect", base + ["collect", "--universe", args.universe]),
                   ("score-news", base + ["score-news"])]
         if args.enable_orders:
-            steps.append(("paper", base + ["paper", "--once", "--enable-orders"]))
+            steps.append(("portfolio-paper", base + ["portfolio-paper", "--universe", args.universe, "--enable-orders"]))
         summary = []
         for name, command in steps:
             result = subprocess.run(command, capture_output=True, text=True)
@@ -373,6 +382,45 @@ def main(argv: list[str] | None = None) -> int:
                 break
         print(json.dumps(summary, indent=2))
         return 0 if all(s["exit"] == 0 for s in summary) else 2
+    elif args.command in ("portfolio-study", "portfolio-targets", "portfolio-paper"):
+        from .portfolio.study import Book, PortfolioRegistry, run_development, run_once
+        home = _home(args)
+        universe = load_universe(Path(args.universe))
+        if args.command == "portfolio-study":
+            with LocalStorage(home, writer=False) as store:
+                book = Book(store, universe)
+            record = run_development(home, book) if args.split == "DEVELOPMENT" else run_once(home, book, args.split)
+            print(json.dumps({k: v for k, v in record.items() if k != "hash"}, indent=2, default=str))
+            return 0
+        developed = [r for r in PortfolioRegistry(home).records() if r["spec"]["split"] == "DEVELOPMENT"]
+        if not developed:
+            print(json.dumps({"result": "BLOCKED", "reason": "run portfolio-study (DEVELOPMENT) first"}))
+            return 2
+        method = developed[-1]["chosen"]
+        from .portfolio.executor import PortfolioDesk, TargetBuilder
+        if args.command == "portfolio-targets":
+            with LocalStorage(home, writer=False) as store:
+                weights, diagnostics = TargetBuilder(store, universe, method).targets(drawdown=0.0)
+            print(json.dumps({"method": method, "weights": {k: round(v, 4) for k, v in sorted(weights.items())},
+                              **diagnostics}, indent=2, default=str))
+            return 0
+        if not args.enable_orders:
+            print(json.dumps({"paper_orders": "DISABLED", "reason": "--enable-orders required"}))
+            return 2
+        key, secret = os.environ.get("ALPACA_PAPER_KEY_ID"), os.environ.get("ALPACA_PAPER_SECRET_KEY")
+        if not key or not secret:
+            print(json.dumps({"paper_orders": "DISABLED", "reason": "paper credentials missing"}))
+            return 2
+        from datetime import datetime as _datetime
+        from .timeframes import NEW_YORK
+        policy = load_policy(home)
+        with LocalStorage(home) as store:
+            builder = TargetBuilder(store, universe, method)
+            desk = PortfolioDesk(store, AlpacaPaperBroker(key, secret, enable_orders=True), AlpacaMarketData(key, secret),
+                                 policy, universe)
+            result = desk.run_once(builder, decision_day=_datetime.now(NEW_YORK).date().isoformat())
+        print(json.dumps(result, indent=2, default=str))
+        return 0
     elif args.command == "score-news":
         from .sentiment import FinbertScorer, score_archive
         home = _home(args)

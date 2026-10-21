@@ -13,7 +13,7 @@ month start using only rows before it, and need two years of history (before tha
 Risk overlay, applied every day to the blended weights:
 1. scale the blend to ``TARGET_VOL`` annual volatility (shrunk correlation, GARCH/EWMA volatilities), times the
    share the blend keeps invested;
-2. caps: gross exposure 1.5, any one asset 30% of capital, crypto 20% in total, shorts 30% in total;
+2. caps: gross exposure 1.0 (no leverage), any one asset 30% of capital, crypto 20% in total, shorts 30% in total;
 3. drawdown control: full size below a 10% drawdown, falling linearly to a quarter of size at 20%, kept at a
    quarter beyond (the owner's 25% limit is also a hard stop in the live Governor).
 """
@@ -29,7 +29,8 @@ from .backtest import BAND, apply_band
 from .panel import BORROW_BPS_PER_YEAR, Panel
 from .risk import correlation, portfolio_vol
 
-TARGET_VOL, GROSS_CAP, ASSET_CAP, CRYPTO_CAP, SHORT_CAP = 0.15, 1.5, 0.30, 0.20, 0.30
+# No leverage: gross exposure is capped at the capital (the owner policy caps holdings at the allocated capital).
+TARGET_VOL, GROSS_CAP, ASSET_CAP, CRYPTO_CAP, SHORT_CAP = 0.15, 1.0, 0.30, 0.20, 0.30
 DD_START, DD_FLOOR_AT, DD_FLOOR = 0.10, 0.20, 0.25
 SHRINK, HORIZON, MIN_TRAIN_ROWS, RECENT_WINDOW, MIN_REGIME_ROWS = 0.5, 21, 504, 126, 60
 METHODS = ("equal", "recent", "regime", "situational")

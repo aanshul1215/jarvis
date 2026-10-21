@@ -54,6 +54,7 @@ class TradingEngine:
         self._ready = False
         self._peak: float | None = None  # equity high-water mark, loaded once from the store
         self._baseline: float | None = None  # account equity at the first run, when capital is allocated
+        self.desk_equity: float | None = None
         # Phase 7 strategy selector hooks (None = every strategy at its base size, no trade filter):
         # ``allocation(now)`` -> {strategy_id: size multiplier}; ``entry_filter(strategy_id, snapshot, now)`` -> bool.
         self.allocation = None
@@ -133,6 +134,7 @@ class TradingEngine:
                         self.store.publish_json(CAPITAL_BASELINE, {"account_equity": state.equity,
                                                                    "allocated_capital": allocated, "at": iso(utc_now())})
             equity = allocated + (state.equity - self._baseline)
+        self.desk_equity = equity  # the capital the desk manages (allocation plus its own P&L, or the account)
         if self._peak is None:
             try:
                 self._peak = float(self.store.load_json(EQUITY_HIGH_WATER)["equity"])

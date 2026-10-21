@@ -80,7 +80,7 @@ features).
 
 - Target 15% annual volatility.
 - Caps:
-  - gross exposure 1.5;
+  - gross exposure 1.0, so no leverage (*amended 2026-10-20, before any real-data run: it was 1.5, but the owner's paper policy caps holdings at the $10,000 allocation*);
   - 30% per asset;
   - 20% crypto;
   - 30% shorts.

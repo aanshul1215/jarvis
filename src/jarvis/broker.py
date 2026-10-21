@@ -59,9 +59,10 @@ class BrokerAdapter(ABC):
 class MockBroker(BrokerAdapter):
     evidence_class = "MOCK"
 
-    def __init__(self, *, cash: float = 1000.0, fill_fraction: float = 1.0):
+    def __init__(self, *, cash: float = 1000.0, fill_fraction: float = 1.0, allow_short: bool = False):
         if not 0 <= fill_fraction <= 1:
             raise ValueError("fill_fraction outside 0..1")
+        self.allow_short = allow_short  # stocks/ETFs only, as on Alpaca
         self.cash = cash
         self.initial_cash = cash
         self.fill_fraction = fill_fraction
@@ -97,7 +98,8 @@ class MockBroker(BrokerAdapter):
         cost = filled * reference_price
         if side == "BUY" and cost > self.cash:
             raise BrokerError("insufficient mock cash")
-        if side == "SELL" and filled > self.positions.get(asset_id, 0):
+        short_ok = self.allow_short and asset_class == AssetClass.EQUITY
+        if side == "SELL" and filled > self.positions.get(asset_id, 0) + 1e-12 and not short_ok:
             raise BrokerError("insufficient mock position")
         if filled:
             self.cash += -cost if side == "BUY" else cost
@@ -148,7 +150,7 @@ class AlpacaPaperBroker(BrokerAdapter):
             raise BrokerError("account last_equity unavailable; daily loss limit cannot be checked")
         symbols = [normalize_symbol(p.symbol, _enum_value(getattr(p, "asset_class", None))) for p in positions]
         return BrokerState(float(account.cash), float(account.buying_power), float(account.equity),
-                           {s: float(p.qty) for s, p in zip(symbols, positions)},
+                           {s: _signed_qty(p) for s, p in zip(symbols, positions)},
                            {s: float(p.market_value) for s, p in zip(symbols, positions)},
                            tuple(o.client_order_id for o in orders if o.client_order_id),
                            reconciled=True,
@@ -212,3 +214,10 @@ class AlpacaPaperBroker(BrokerAdapter):
         if order is None:
             raise BrokerError("order missing; cannot cancel")
         self.client.cancel_order_by_id(order.broker_order_id)
+
+
+def _signed_qty(position) -> float:
+    """Alpaca reports short positions with side 'short'; make sure their quantity is negative either way."""
+    qty = float(position.qty)
+    side = str(_enum_value(getattr(position, "side", "")) or "").lower()
+    return -abs(qty) if side == "short" else qty
