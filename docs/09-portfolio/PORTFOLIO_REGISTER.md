@@ -265,3 +265,43 @@ Owner decisions 2026-10-20: the revised ranker plan (`RANKER_DESIGN.md`) is appr
    - then the confirmation, run once **for the record only**, because it is contaminated and not a gate;
    - then the holdout, run once, as the decisive test. Its pass rule is unchanged: Sharpe ≥ SPY's, worst drawdown within 25%, and more than T-bills.
    - Paper trading starts only if the holdout passes, or if the owner decides otherwise after seeing it.
+
+## Round 4 results (v1.3.0, run 2026-10-20)
+
+**Development (2017–2021).**
+- **Chosen:** `equal`: 17.5% a year, Sharpe 1.16, volatility 14.8%, worst drawdown −17.9%, turnover 22.8× a year.
+  - With doubled costs: 15.9% a year.
+  - With 7% margin: 15.5% a year.
+- **Deflated Sharpe probability:** 0.96 (25 trials).
+
+**Confirmation (2022–2023, for the record only; contaminated).**
+- **System:** +0.8% total, Sharpe 0.10, worst drawdown −18.4%.
+- **Benchmarks:** SPY +2.3% / 0.16; T-bills +7.2%.
+- **Not passed.**
+
+**Holdout (2024-01-02 to 2026-10-19, run once): FAILED.**
+- **System:** +22.6% total (7.6% a year), Sharpe 0.60, worst drawdown −20.0%; 6.3% a year with doubled costs.
+- **Benchmarks:**
+
+  | Benchmark | Per year | Sharpe | Worst drawdown |
+  |---|---|---|---|
+  | SPY | 20.3% | 1.26 | −19.8% |
+  | Equal-weight universe | 17.7% | 1.45 | −14.9% |
+  | 60/40 | 12.9% | 1.29 | −11.2% |
+  | T-bills | 12.5% total | | |
+
+- **Failed check:** Sharpe ≥ SPY's. It passed the drawdown and T-bill checks.
+
+**Post-mortem (after the holdout, so explanation only; no clean historical test remains).**
+- **Each sleeve alone earned money in 2024+** (Sharpe 0.14–1.57): theme 1.57, earnings drift 1.36, trend-200 1.01, low-vol 0.95, cross-asset trend 0.87, news 0.73, momentum ranker 0.70, volatility breakout 0.14.
+- **The losses came from the portfolio layer.** Re-running v1.3.0 with one element changed at a time:
+
+  | Variant | 2017–21 / yr | 2017–21 Sharpe | 2024+ / yr | 2024+ Sharpe | 2024+ worst drawdown |
+  |---|---|---|---|---|---|
+  | As registered | 17.5% | 1.16 | 7.6% | 0.60 | −20.0% |
+  | No margin interest | 20.5% | 1.33 | 12.3% | 0.90 | −19.4% |
+  | No trading costs | 19.0% | 1.24 | 9.1% | 0.69 | −19.8% |
+  | No drawdown brake | 19.0% | 1.22 | 9.8% | 0.72 | −20.0% |
+  | **Gross cap 1.0 (no leverage)** | 13.0% | **1.37** | **10.1%** | **1.16** | **−10.4%** |
+
+- **Leverage cost more than it earned once interest rates rose.** Margin interest of about 8% on about 0.5× borrowed cost about 4.7% a year in 2024+. Without leverage the system's Sharpe (1.16) was close to SPY's (1.26), with about half the drawdown, but it earned half the return.
