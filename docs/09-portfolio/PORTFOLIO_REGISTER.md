@@ -203,3 +203,43 @@ Owner decisions 2026-10-20: the revised ranker plan (`RANKER_DESIGN.md`) is appr
    - It sizes buys against the broker's buying power, so margin is allowed; before, it used the smaller of buying power and cash.
    - The paper policy's holdings cap becomes $20,000 on the $10,000 allocation.
 9. **Next:** if development chooses a configuration, its confirmation (2022–2023) and then its holdout (2024+) run once each, straight after, with the registered pass rule.
+
+## Round 3 results (v1.2.0, run 2026-10-20)
+
+**Development (2017–2021).**
+- **Chosen:** `equal`: 18.2% a year, Sharpe 1.23, volatility 14.5%, worst drawdown −18.5%, turnover 23.7× a year.
+  - With doubled costs: 16.6% a year.
+  - With 7% margin throughout: 16.2% a year.
+- **Other methods:** `situational` 17.6% / 1.20; `regime` 17.0% / 1.17; `recent` 14.9% / 1.04; `ranker_only` 13.6% / 0.98.
+- **Benchmarks:** SPY 18.1% / 1.05 / −32.0%; equal-weight universe 19.7% / 1.32 / −26.2%; 60/40 12.5% / 1.24 / −18.7%.
+- **Deflated Sharpe probability:** 0.96 (25 trials).
+- **The risk gap is closed:** 14.5% realised volatility against the 15% target.
+
+**Confirmation (2022–2023, run once): FAILED.**
+- **System:** −5.1% total, Sharpe −0.17, worst drawdown −18.0%; −7.6% with doubled costs.
+- **Benchmarks:**
+  - SPY: +2.3%, Sharpe 0.16, −26.3%;
+  - equal-weight universe: +5.2%;
+  - 60/40: −3.2%;
+  - T-bills: +7.2%.
+- **Failed checks:** Sharpe ≥ SPY's, and beating T-bills.
+- **Holdout:** **not run.** A configuration that failed confirmation does not spend the untouched 2024+ period.
+
+**Post-mortem (2022–2023, looked at after the confirmation, so these periods are no longer clean for later versions):**
+- **By year:** 2022 −13.2%, 2023 +9.2%.
+- **Sleeves alone (CAGR):**
+
+  | Sleeve | CAGR |
+  |---|---|
+  | `momentum_ranker` | +5.7% (Sharpe 0.59: the only sleeve beating SPY) |
+  | `trend_sma200` | +0.5% |
+  | `volatility_breakout` | +0.5% |
+  | `low_volatility` | −0.7% |
+  | `earnings_drift` | −3.8% |
+  | `theme_ai_power` | −4.8% |
+  | `news_sentiment` | −6.3% |
+  | `trend_xasset` | −6.8% |
+
+- **Cross-asset trend:** its bond shorts earned about +7% in 2022, but equity-sector whipsaw lost about as much. The 2023 reversal then cost it again.
+- **Drawdown control lock-out:** the portfolio was more than 10% below its peak on 93% of 2023's days. So it ran at about 0.93× gross instead of about 1.6× through the 2023 rebound.
+- **Margin was not a cause:** about 0.3% a year.
