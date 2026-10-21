@@ -80,3 +80,30 @@
 - average names held, share of time risk-off;
 - the largest industry share;
 - exits caused by a stock's data ending.
+
+## Result (run once, 2026-10-21; version stock-book-1.0.0)
+
+**Development, 2017-01-03 to 2021-12-31.**
+
+| | CAGR | Sharpe above T-bills | Worst drawdown | Volatility | Turnover/yr | Risk-off share |
+|---|---|---|---|---|---|---|
+| **B1 stock book** | 10.9% | 0.45 (0.36 at 2× costs) | −36.4% | **31.9%** | **46.7×** | 8% |
+| R0 equal-weight 300 | 15.8% | 0.77 | −35.9% | 20.2% | — | — |
+| SPY | 18.2% | 0.99 | −32.0% | 17.2% | — | — |
+
+**Ablations** (information only; not adoptable from this run):
+
+| | CAGR | Sharpe above T-bills | Worst drawdown | Volatility | Turnover/yr |
+|---|---|---|---|---|---|
+| A1 no market switch | 22.4% | 0.75 | −34.9% | 32.6% | 48.4× |
+| A2 momentum only | 13.2% | 0.50 | −40.3% | 34.7% | 10.9× |
+| A3 event only | 11.8% | 0.57 | −30.1% | 21.7% | 11.6× |
+| A4 no bounce | 6.3% | 0.32 | −41.1% | 33.3% | 14.6× |
+
+**Decision: failed development.** No confirmation or holdout was run; both periods remain unseen.
+
+**Reading:**
+1. **The selected stocks are very volatile:** about 32% a year, against 20% for the 300. Momentum and event picks are high-beta names, and equal weighting lets them dominate risk.
+2. **The bounce component churns:** 47× turnover a year, against about 11–15× without it.
+3. **The monthly market switch cost money in 2017–21.** It whipsawed in early 2019 and around the 2020 crash, and did not reduce the worst drawdown (the crash happened inside a month).
+4. **The differences between ablations are within noise for 5 years of data.** None beat R0's Sharpe.
