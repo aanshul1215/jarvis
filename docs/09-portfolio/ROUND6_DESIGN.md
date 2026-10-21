@@ -41,3 +41,23 @@ Each month, at the first session, decided after its close and traded at the next
 - **Deflated Sharpe:** counts every trial logged so far.
 
 **Honesty:** these rules were fixed by 1927–2015 evidence plus one data fix (XLC). Every 2016–2026 period has been looked at before, so this is not a clean out-of-sample test. Live paper trading is the next honest one.
+
+## Result (run once, 2026-10-20; data to 2026-10-20)
+
+CAGR / Sharpe above T-bills / worst drawdown:
+
+| | 2017–2021 | 2022–2023 | 2024–2026 | 2017–2026 |
+|---|---|---|---|---|
+| **Sector rotation (round 6)** | 12.2% / 0.62 / −33.9% | **10.9% / 0.58 / −11.8%** | **31.5% / 1.32 / −15.0%** | **17.1% / 0.81 / −33.9%** |
+| Same, doubled costs | 12.0% | 10.7% | 31.4% | 16.9% |
+| Round 5 sector variant (no XLC) | 12.2% | 8.6% | 27.4% | 15.6% / 0.74 |
+| Round 5 core (here with XLC in its universe too) | 10.9% | 6.1% | 19.3% | 12.2% / 0.56 |
+| SPY | 18.1% / 0.99 / −32.0% | 1.1% / −0.03 / −26.3% | 20.3% / 0.98 / −19.8% | 15.0% / 0.75 / −32.0% |
+| QQQ | 28.3% | 1.7% | 23.1% | 20.9% / 0.86 / −36.6% |
+| 60/40 | 12.6% | −1.6% | 12.6% | 9.5% / 0.69 / −22.5% |
+| Equal weight, 29 ETFs (fair) | 12.4% | 1.0% | 17.2% | 11.3% / 0.73 / −27.0% |
+| Equal weight, all 39 (hindsight) | 19.2% | 3.8% | 20.8% | 16.3% / 0.93 / −28.9% |
+
+- **Activity:** 101 of 118 monthly decisions were risk-on, with 8 switches. Turnover was 3.5× a year; doubled costs cost 0.2% a year.
+- **Deflated Sharpe probability:** 0.90 (28 trials).
+- **The worst drawdown (−33.9%) is beyond the owner's 25% limit.** It came in the 2020 COVID crash, inside a single month, before the monthly filter could act. Live, the Governor would stop new risk at −25%.
