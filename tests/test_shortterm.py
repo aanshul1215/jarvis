@@ -105,3 +105,20 @@ def test_event_rule_needs_a_jump_beating_spy_on_heavy_volume():
     spy = np.full(40, 400.0)
     hits = E.events(m, universe, [30], spy, np.ones(40, dtype=bool), E.VARIANTS["E1"], E.volume_ratio(m.volume))
     assert hits[30] == [0]
+
+
+def test_intraday_signal_uses_the_morning_and_trades_only_the_last_half_hour():
+    from jarvis.shortterm import intraday as I
+    rows = []
+    for k, day in enumerate([date(2020, 3, 2), date(2020, 3, 3), date(2020, 3, 4)]):
+        for slot, (o, c) in {"09:30": (100, 101 if k != 2 else 99), "15:00": (101, 101), "15:30": (101, 102)}.items():
+            ts = pd.Timestamp(f"{day} {slot}", tz="America/New_York").tz_convert("UTC")
+            rows.append({"symbol": "SPY", "timestamp": ts, "open": o, "high": c, "low": o, "close": c, "volume": 1})
+    table = I.daily_table(pd.DataFrame(rows))
+    days = sorted(table["day"].unique())
+    traded, trades = I.strategy_returns(table, "I1", {}, days)
+    # day 2: previous 16:00 close 102 -> 10:00 close 101 is negative: no trade; day 3 likewise; day 1 has no
+    # previous close. So nothing trades, whatever happens in the last half-hour.
+    assert traded == {} and trades == []
+    always, _ = I.strategy_returns(table, "I0", {}, days)
+    assert always[days[1]] == pytest.approx(102 / 101 * (1 - I.COST_INDEX) ** 2 - 1)
