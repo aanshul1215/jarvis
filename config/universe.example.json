@@ -1,5 +1,5 @@
 {
-  "version": "universe-2026-10-20-expanded",
+  "version": "universe-2026-10-20-xlc",
   "status": "CONFIRMED by the owner 2026-10-20 (27 + 11 ETFs added for cross-asset trend and themes); copy to JARVIS_HOME/config/universe.json",
   "equities": [
     "SPY",
@@ -39,7 +39,8 @@
     "CPER",
     "VNQ",
     "SMH",
-    "XLB"
+    "XLB",
+    "XLC"
   ],
   "crypto": [
     "BTC/USD",
@@ -51,6 +52,7 @@
     "The eight sector ETFs feed sector-relative strength and breadth across sectors.",
     "Ten large, liquid single stocks keep spreads small; this list is survivorship-biased (chosen today), so single-stock results must be read with that caveat.",
     "BTC/USD and ETH/USD are data-only until crypto trading eligibility in Texas is confirmed by the paper-account probe.",
-    "Added 2026-10-20: EFA, EEM (international), SHY, TIP (bonds), DBC, USO, SLV, CPER (commodities), VNQ (real estate), SMH (semiconductors), XLB (materials) for cross-asset trend following and the AI/power theme layer."
+    "Added 2026-10-20: EFA, EEM (international), SHY, TIP (bonds), DBC, USO, SLV, CPER (commodities), VNQ (real estate), SMH (semiconductors), XLB (materials) for cross-asset trend following and the AI/power theme layer.",
+    "Added 2026-10-20: XLC (communication services: Alphabet, Meta), so the sector rotation can hold the sector our two missing mega-caps belong to. History from June 2018."
   ]
 }

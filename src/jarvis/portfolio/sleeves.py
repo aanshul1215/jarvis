@@ -27,7 +27,7 @@ SLEEVE_VOL, SLEEVE_GROSS = 0.10, 2.0
 # Asset groups (for cross-sectional rules and pairs). Fixed list, not chosen by results.
 GROUPS = {
     "equity_index": ("SPY", "QQQ", "IWM", "DIA", "EFA", "EEM"),
-    "sector": ("XLF", "XLK", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU", "XLB", "SMH", "VNQ"),
+    "sector": ("XLF", "XLK", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU", "XLB", "SMH", "VNQ", "XLC"),
     "single_stock": ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM", "XOM", "UNH"),
     "bond": ("TLT", "IEF", "SHY", "TIP", "HYG", "LQD"),
     "commodity": ("GLD", "SLV", "DBC", "USO", "CPER"),

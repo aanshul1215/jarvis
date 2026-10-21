@@ -101,3 +101,19 @@ def check_unlevered(weights: np.ndarray) -> None:
     """Round 5 guard (round 4's losses came from leverage): long only and never more than 100% invested."""
     if (weights < -1e-12).any() or (weights.sum(axis=1) > 1 + 1e-9).any():
         raise AssertionError("core weights must be long-only and sum to at most 1 (no leverage, no shorts)")
+
+
+# Round 6 (v1.5.0): the sector form of the core, as the long-history study validated it (sectors, not single stocks).
+SECTOR_ENTER, SECTOR_HOLD = 3, 6
+
+
+def sector_weights(ctx: Context, rates: np.ndarray) -> tuple[np.ndarray, dict]:
+    """The 12 sector ETFs (XLC included from round 6): hold the top 3 by composite momentum, keep while in the top 6,
+    one third each, under the same 12-month trend filter and SHY risk-off asset as the core."""
+    from .ranker import holdings
+    from .sleeves import GROUPS
+
+    held, report = holdings(ctx, universe=GROUPS["sector"], enter_top=SECTOR_ENTER, hold_top=SECTOR_HOLD,
+                            max_held=SECTOR_ENTER)
+    w, filt = core_weights(ctx, rates, held=held, slots=SECTOR_ENTER)
+    return w, {**filt, "ranker": report}

@@ -337,3 +337,14 @@ def test_simulate_monthly_rebalance_trades_only_on_rebalance_rows():
     sim = simulate(panel, w, start=0, band=0.0, relative=0.0, rebalance_rows=rows)
     traded = {panel.dates.index(d) - 1 for d, x in zip(sim["dates"], sim["turnover"]) if x > 1e-12}
     assert traded <= rows and np.allclose(sim["net"], 1.0)
+
+
+def test_sector_rotation_holds_only_sectors_or_shy_unlevered():
+    from jarvis.portfolio import core
+    panel = synthetic_panel(900, seed=16)
+    ctx = context(panel)
+    rates = core.known_rate(panel.dates, {d.isoformat(): 2.0 for d in panel.dates})
+    w, report = core.sector_weights(ctx, rates)
+    allowed = {panel.index(a) for a in sl.GROUPS["sector"]} | {panel.index("SHY")}
+    assert set(np.where(w.any(axis=0))[0]) <= allowed and report["decisions"] > 10
+    assert (w > 0).sum(axis=1).max() <= core.SECTOR_ENTER + 1 and np.all(w.sum(axis=1) <= 1 + 1e-9)

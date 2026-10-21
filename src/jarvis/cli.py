@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--universe", required=True, help="universe JSON")
         if name == "portfolio-study":
             command.add_argument("--split", default="DEVELOPMENT", choices=("DEVELOPMENT", "CONFIRMATION", "HOLDOUT"))
-            command.add_argument("--design", default="blend", choices=("blend", "core"),
+            command.add_argument("--design", default="blend", choices=("blend", "core", "sector"),
                                  help="core: round 5 trend-filtered momentum core, every period at once")
         if name == "portfolio-paper":
             command.add_argument("--enable-orders", action="store_true", help="required to place paper orders")
@@ -390,11 +390,11 @@ def main(argv: list[str] | None = None) -> int:
         from .portfolio.study import Book, PortfolioRegistry, run_development, run_once
         home = _home(args)
         universe = load_universe(Path(args.universe))
-        if args.command == "portfolio-study" and args.design == "core":
-            from .portfolio.study import CoreBook, run_core_study
+        if args.command == "portfolio-study" and args.design in ("core", "sector"):
+            from .portfolio.study import CoreBook, run_core_study, run_sector_study
             with LocalStorage(home, writer=False) as store:
                 book = CoreBook(store, universe)
-            record = run_core_study(home, book)
+            record = (run_core_study if args.design == "core" else run_sector_study)(home, book)
             print(json.dumps({k: v for k, v in record.items() if k != "hash"}, indent=2, default=str))
             return 0
         if args.command == "portfolio-study":

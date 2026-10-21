@@ -341,3 +341,67 @@ def run_core_study(home: Path, book) -> dict:
               "status": "COMPLETED", "data_last_date": book.panel.dates[-1].isoformat(), "results": table,
               "reports": out["reports"], "deflated_sharpe_2017_2026": dsr}
     return registry.append(record)
+
+
+SECTOR_VERSION = "1.5.0"  # round 6: sector rotation (12 sector ETFs incl. XLC) under the 12-month trend filter
+
+
+def run_sector_study(home: Path, book) -> dict:
+    """Round 6: the registered sector rotation once over every period, next to the earlier versions and fair
+    benchmarks (docs/09-portfolio/ROUND6_DESIGN.md)."""
+    from .core import core_weights, known_rate, sector_weights
+    from .ranker import holdings, month_starts
+
+    registry = PortfolioRegistry(home)
+    p = book.panel
+    rates = known_rate(p.dates, book.tbill)
+    first_row = next(i for i, d in enumerate(p.dates) if d >= date(2017, 1, 1))
+    monthly = set(month_starts(p.dates))
+    runs, reports = {}, {}
+    w, reports["sector_rotation"] = sector_weights(book.ctx, rates)
+    runs["sector_rotation"] = simulate(p, w, start=first_row, rebalance_rows=monthly)
+    runs["sector_rotation_double_costs"] = simulate(p, w, start=first_row, rebalance_rows=monthly, cost_multiplier=2.0)
+    old = tuple(a for a in GROUPS["sector"] if a != "XLC")
+    held, _ = holdings(book.ctx, universe=old, enter_top=3, hold_top=6, max_held=3)
+    w5, _ = core_weights(book.ctx, rates, held=held, slots=3)
+    runs["round5_sector_variant_no_xlc"] = simulate(p, w5, start=first_row, rebalance_rows=monthly)
+    w4, _ = core_weights(book.ctx, rates)
+    runs["round5_core"] = simulate(p, w4, start=first_row, rebalance_rows=monthly)
+    t, n = p.shape
+    for name, mix in (("SPY", {"SPY": 1.0}), ("QQQ", {"QQQ": 1.0}), ("60_40", {"SPY": 0.6, "IEF": 0.4})):
+        x = np.zeros((t, n))
+        for a, v in mix.items():
+            x[:, p.index(a)] = v
+        runs[name] = simulate(p, x, start=first_row, band=0.0, relative=0.0, rebalance_rows=monthly)
+    stocks = set(GROUPS["single_stock"])
+    for name, cols in (("equal_weight_etfs_fair", [i for i, (a, c) in enumerate(zip(p.assets, p.classes))
+                                                   if c == AssetClass.EQUITY and a not in stocks]),
+                       ("equal_weight_all_hindsight", [i for i, c in enumerate(p.classes) if c == AssetClass.EQUITY])):
+        x = np.zeros((t, n))
+        live = np.isfinite(p.close[:, cols])
+        x[:, cols] = live / np.maximum(live.sum(axis=1, keepdims=True), 1)
+        runs[name] = simulate(p, x, start=first_row, band=0.0, relative=0.0, rebalance_rows=monthly)
+    by_date = dict(zip(p.dates, rates))
+    table = {}
+    for name, run in runs.items():
+        table[name] = {}
+        for period, (first, last) in ALL_PERIODS.items():
+            s = slice_stats(run, first, last)
+            keep = [i for i, d in enumerate(run["dates"]) if first <= d <= last]
+            s["sharpe_above_tbills"] = excess_sharpe([run["dates"][i] for i in keep], run["returns"][keep], by_date)
+            table[name][period] = s
+    history = [v["stats"].get("sharpe") or 0.0 for r in registry.records() if r["spec"]["split"] == "DEVELOPMENT"
+               for v in r.get("methods", {}).values()]
+    history += [v["2017-2021"]["sharpe"] or 0.0 for r in registry.records() if r["spec"]["split"] == "ALL_PERIODS"
+                for v in r.get("results", {}).values()]
+    keep = [i for i, d in enumerate(runs["sector_rotation"]["dates"]) if d >= date(2017, 1, 1)]
+    dsr = deflated_sharpe(runs["sector_rotation"]["returns"][keep],
+                          [s / math.sqrt(252) for s in history + [table["sector_rotation"]["2017-2021"]["sharpe"] or 0.0]],
+                          MIN_TRIALS)
+    holdings_log = {p.dates[t].isoformat(): sorted(p.assets[j] for j in np.where(w[t] > 0)[0]) for t in sorted(monthly)
+                    if t >= first_row}
+    record = {"created_at": iso(utc_now()), "fingerprint": _hash(_canonical({"version": SECTOR_VERSION, "assets": p.assets}))[:20],
+              "version": SECTOR_VERSION, "spec": {"split": "ALL_PERIODS", "design": "sector_rotation"},
+              "status": "COMPLETED", "data_last_date": p.dates[-1].isoformat(), "results": table, "reports": reports,
+              "deflated_sharpe_2017_2026": dsr, "monthly_holdings": holdings_log}
+    return registry.append(record)
