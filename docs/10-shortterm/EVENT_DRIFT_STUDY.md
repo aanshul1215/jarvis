@@ -61,3 +61,23 @@ For each candidate:
 - trades per year, average net per trade, win rate;
 - the average number of slots in use;
 - exits caused by a stock's data ending.
+
+## Result (run once, 2026-10-21; version event-drift-1.0.0)
+
+**Development, 2016-02 to 2021-12.**
+
+| id | CAGR | Sharpe above T-bills | Worst drawdown | Volatility | Trades/yr | Avg net per trade | Win rate | Avg slots used (of 20) |
+|---|---|---|---|---|---|---|---|---|
+| E0 equal-weight 300 | **16.9%** | **0.86** | −35.9% | 19.3% | — | — | — | — |
+| E1 base, 20 days | 9.9% | 0.51 | −30.7% | 21.1% | 149 | **+1.78%** | 57% | 11.7 |
+| E2 10 days | 8.5% | 0.45 | −31.7% | 20.4% | 166 | +0.81% | 52% | 6.6 |
+| E3 E1 in SPY uptrends | 11.9% | 0.62 | −25.0% | 19.9% | 126 | +1.64% | 56% | 9.9 |
+| E4 stronger events | 8.5% | 0.57 | **−16.7%** | 14.5% | 70 | **+2.51%** | 57% | 5.5 |
+| E5 fade exit | 4.2% | 0.30 | −22.7% | 13.7% | 167 | +0.59% | 42% | 7.3 |
+
+**Decision: nothing passed** (the bar was a Sharpe of 1.06). So no confirmation or holdout was run; both periods remain unseen for this data.
+
+**Reading:**
+- **The effect is real and survives costs.** It earned +1.8% net per 20-day trade (+1.65% at double costs), and 57% of trades won.
+- **But capital sits idle.** About 40–70% of the slots were empty, earning T-bills of about 1% in 2016–21. So the lane as a whole earned less than simply holding the 300 stocks.
+- **The events are useful as signals that tilt a fully invested book,** not as a standalone strategy that is mostly in cash. That is an architecture conclusion, to be tested as its own pre-registered design. It is not a reason to rerun this one.
