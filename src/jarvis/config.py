@@ -13,7 +13,8 @@ from .risk import RiskPolicy
 POLICY_FIELDS = {"version", "approved_assets", "approved_strategies", "max_order_notional",
                  "max_asset_notional", "max_portfolio_notional", "max_daily_loss", "max_drawdown",
                  "max_spread_bps", "max_quote_age_seconds", "paper_enabled", "crypto_enabled", "owner_approved"}
-OPTIONAL_POLICY_FIELDS = {"allocated_capital"}
+OPTIONAL_POLICY_FIELDS = {"allocated_capital", "approved_asset_rules"}
+ASSET_RULES = {"shortterm_top300"}
 
 
 def load_policy(home: Path) -> RiskPolicy:
@@ -38,8 +39,12 @@ def load_policy(home: Path) -> RiskPolicy:
     if "allocated_capital" in data and (type(data["allocated_capital"]) not in (int, float)
                                         or not 0 < data["allocated_capital"] < float("inf")):
         raise ValueError("invalid allocated_capital")
+    rules = data.get("approved_asset_rules", [])
+    if not isinstance(rules, list) or any(r not in ASSET_RULES for r in rules):
+        raise ValueError(f"approved_asset_rules must be a list drawn from {sorted(ASSET_RULES)}")
     return RiskPolicy(**{**data, "approved_assets": tuple(data["approved_assets"]),
-                         "approved_strategies": tuple(data["approved_strategies"])})
+                         "approved_strategies": tuple(data["approved_strategies"]),
+                         "approved_asset_rules": tuple(rules)})
 
 
 @dataclass(frozen=True)

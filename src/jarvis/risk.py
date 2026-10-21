@@ -32,6 +32,9 @@ class RiskPolicy:
     # $100,000). The drawdown limit is then measured on this amount plus JARVIS's own gains and losses since it
     # started, not on the whole account. None = the whole account.
     allocated_capital: float | None = None
+    # Rules the owner approved instead of listing every asset (round 7): "shortterm_top300" = any stock in the
+    # current month's point-in-time top-300 universe (JARVIS_HOME/shortterm/universe_top300.json).
+    approved_asset_rules: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         numeric = (self.max_order_notional, self.max_asset_notional, self.max_portfolio_notional,

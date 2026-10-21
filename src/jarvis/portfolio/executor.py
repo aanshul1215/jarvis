@@ -20,6 +20,7 @@ recorded as rejected, so a predictable refusal (for example "not shortable") can
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -92,16 +93,26 @@ class CycleReport:
 
 
 class PortfolioDesk:
+    """``strategy_id`` names the desk in the owner policy and in every order intent. The round 7 desks (sector
+    rotation, stock book) pass ``use_brake=False`` (no drawdown brake by design; the Governor's stops remain), their
+    own research no-trade band, and the stock book ``fractional=True``. ``approved`` replaces the policy's asset list
+    when the owner approved a rule instead (for example the month's top-300 stocks)."""
+
     def __init__(self, store: LocalStorage, broker, data, policy: RiskPolicy, universe: list[UniverseAsset], *,
-                 clock=utc_now):
+                 clock=utc_now, strategy_id: str = "portfolio", fractional: bool = False, band: float = BAND,
+                 band_rel: float = BAND_REL, use_brake: bool = True, pause: float = 0.0,
+                 approved: set[str] | None = None):
         if not policy.owner_approved or not policy.paper_enabled:
             raise ValueError("owner paper approval required")
-        if "portfolio" not in policy.approved_strategies:
-            raise ValueError("the owner policy does not approve the portfolio system ('portfolio' strategy)")
+        if strategy_id not in policy.approved_strategies:
+            raise ValueError(f"the owner policy does not approve the '{strategy_id}' desk")
         if not policy.allocated_capital:
             raise ValueError("the portfolio desk needs allocated_capital in the owner policy")
         self.store, self.broker, self.data, self.policy, self.clock = store, broker, data, policy, clock
-        self.universe = {a.symbol: a for a in universe if a.symbol in policy.approved_assets}
+        self.strategy_id, self.fractional, self.band, self.band_rel = strategy_id, fractional, band, band_rel
+        self.use_brake, self.pause = use_brake, pause
+        allowed = set(policy.approved_assets) if approved is None else approved
+        self.universe = {a.symbol: a for a in universe if a.symbol in allowed}
         self.engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry([]), Mode.PAPER)
 
     def _event(self, kind: str, payload: dict, asset: str | None = None, reasons: tuple[str, ...] = ()) -> None:
@@ -131,7 +142,7 @@ class PortfolioDesk:
         cancelled = []
         for client_id in self.broker.state().open_order_ids:
             intent = self.store.index.intents.get(client_id)
-            if intent and intent["payload"].get("strategy_id") == "portfolio":
+            if intent and intent["payload"].get("strategy_id") == self.strategy_id:
                 self.broker.cancel(client_id)
                 self._event("ORDER_CANCEL", {"client_order_id": client_id}, intent.get("asset_id"), ("NEW_CYCLE",))
                 cancelled.append(client_id)
@@ -179,7 +190,7 @@ class PortfolioDesk:
             delta = target - current
             closing = target == 0 and current != 0
             reducing = abs(target) < abs(current) and (target == 0 or np.sign(target) == np.sign(current))
-            if abs(delta) < max(BAND * capital, BAND_REL * abs(target)) and not closing:
+            if abs(delta) < max(self.band * capital, self.band_rel * abs(target)) and not closing:
                 continue
             if halted and not reducing:
                 report.skipped[asset] = "LOSS_STOP_ACTIVE"
@@ -194,8 +205,15 @@ class PortfolioDesk:
                 quantity = min(abs(delta), p.max_order_notional) / (mid if reducing else price)
                 if reducing:
                     quantity = min(quantity, abs(current_qty))
-                quantity = float(math.floor(quantity + 1e-9)) if info.asset_class == AssetClass.EQUITY \
-                    else math.floor(quantity * 1e8) / 1e8
+                if info.asset_class == AssetClass.EQUITY and not self.fractional:
+                    quantity = float(math.floor(quantity + 1e-9))
+                elif info.asset_class == AssetClass.EQUITY:
+                    quantity = math.floor(quantity * 1e4) / 1e4  # fractional shares
+                    if quantity * mid < 1.0:  # Alpaca's minimum fractional order is $1
+                        report.skipped[asset] = "BELOW_ONE_DOLLAR"
+                        continue
+                else:
+                    quantity = math.floor(quantity * 1e8) / 1e8
             if quantity <= 0:
                 report.skipped[asset] = "BELOW_ONE_UNIT"
                 continue
@@ -230,11 +248,14 @@ class PortfolioDesk:
         cancelled = self.cancel_own_open_orders()
         if cancelled:  # partial fills may have changed positions: reconcile again before planning
             capital, state = self.capital_and_state()
-        brake = self.brake_drawdown(capital, decision_day)
+        brake = self.brake_drawdown(capital, decision_day) if self.use_brake else 0.0
         weights, diagnostics = builder.targets(brake)
         diagnostics = {**diagnostics, "all_time_drawdown": state.drawdown}
         self._event("PORTFOLIO_TARGET", {"capital": capital, "weights": weights, **diagnostics})
         rebalance = getattr(builder, "is_rebalance_day", lambda: True)()
+        if not rebalance and not any(abs(q) > 1e-12 for q in state.positions.values()):
+            rebalance = True  # a new (empty) desk builds its current target positions at once
+            diagnostics = {**diagnostics, "initial_build": True}
         if not rebalance and drawdown_multiplier(brake) >= 1.0:
             summary = {"capital": capital, "halted": False, "orders": 0, "cancelled_open_orders": len(cancelled),
                        "results": {}, "skipped": {}, "planned": [], "note": "not a rebalance day; holding"}
@@ -250,9 +271,11 @@ class PortfolioDesk:
             self.engine._record("ORDER_INTENT", client_id, asset_id=order.asset, payload={
                 "intent_id": client_id, "client_order_id": client_id, "asset_class": order.asset_class.value,
                 "decided_at": iso(self.clock()), "reference_price": order.reference_price, "quantity": order.quantity,
-                "side": order.side, "strategy_id": "portfolio", "strategy_version": builder.method,
+                "side": order.side, "strategy_id": self.strategy_id, "strategy_version": builder.method,
                 "target_weight": order.target_weight, "current_value": order.current_value, "capital": capital,
                 "kind": order.kind})
+            if self.pause:
+                time.sleep(self.pause)  # stay inside the broker's request rate limit on large rebalances
             try:
                 placed = self.broker.submit(client_id, order.asset, order.asset_class, order.side, order.quantity,
                                             order.reference_price)

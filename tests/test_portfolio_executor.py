@@ -144,3 +144,37 @@ def test_unfilled_orders_from_an_earlier_cycle_are_cancelled_before_planning(tmp
         assert result["cancelled_open_orders"] == 1
         assert not [c for c in broker.state().open_order_ids if broker.orders[c].status == "PARTIALLY_FILLED"
                     and c in result.get("results", {})]
+
+
+def test_round7_desk_options_fractional_band_strategy_and_no_brake(tmp_path):
+    with LocalStorage(tmp_path / "d") as store:
+        broker = MockBroker(cash=10_000)
+        d = PortfolioDesk(store, broker, Quotes(), policy(approved_strategies=("stock_book",)), UNIVERSE,
+                          strategy_id="stock_book", fractional=True, band=0.001, band_rel=0.25, use_brake=False)
+        result = d.run_once(FixedTargets({"SPY": 0.004, "TLT": 0.0}), decision_day="2026-10-21")
+        assert broker.positions["SPY"] == pytest.approx(0.0798)  # $40 at the $501.05 limit, 4 decimals
+        intents = [r["event"] for r in store.read_events() if r["event"]["event_type"] == "ORDER_INTENT"]
+        assert intents and all(e["payload"]["strategy_id"] == "stock_book" for e in intents)
+        with pytest.raises(FileNotFoundError):
+            store.load_json("portfolio-equity-history")                           # no brake bookkeeping
+        tiny = PortfolioDesk(store, broker, Quotes(), policy(approved_strategies=("stock_book",)), UNIVERSE,
+                             strategy_id="stock_book", fractional=True, band=0.0, band_rel=0.0, use_brake=False)
+        report = tiny.plan({"TLT": 0.00005}, broker.state(), 10_000)
+        assert report.skipped.get("TLT") == "BELOW_ONE_DOLLAR"
+    with pytest.raises(ValueError):
+        PortfolioDesk(store, broker, Quotes(), policy(), UNIVERSE, strategy_id="stock_book")   # not approved
+
+
+def test_an_empty_desk_builds_at_once_then_holds_until_its_rebalance_day(tmp_path):
+    class NotToday(FixedTargets):
+        def is_rebalance_day(self):
+            return False
+
+    with LocalStorage(tmp_path / "d") as store:
+        broker = MockBroker(cash=10_000)
+        d = PortfolioDesk(store, broker, Quotes(), policy(approved_strategies=("sector_rotation",)), UNIVERSE,
+                          strategy_id="sector_rotation", use_brake=False)
+        first = d.run_once(NotToday({"SPY": 0.3, "TLT": 0.3}), decision_day="2026-10-21")
+        assert first["orders"] == 2 and first["diagnostics"].get("initial_build")
+        second = d.run_once(NotToday({"SPY": 0.0, "TLT": 0.6}), decision_day="2026-10-22")
+        assert second["orders"] == 0 and second["note"] == "not a rebalance day; holding"
