@@ -32,11 +32,12 @@ from ..market import stable_id
 from ..risk import CLOCK_SKEW, Governor, RiskPolicy
 from ..storage import LocalStorage
 from ..strategies import StrategyRegistry
-from .allocator import SHORT_CAP, blend_schedule, drawdown_multiplier, overlay
+from .allocator import DD_WINDOW, SHORT_CAP, drawdown_multiplier, overlay
 from .backtest import BAND, BAND_REL
 from .situation import FEATURES
 
 BUY_LIMIT_MARGIN = 0.002
+EQUITY_HISTORY = "portfolio-equity-history"  # the desk's equity per decision day, for the drawdown control
 
 
 class TargetBuilder:
@@ -47,8 +48,7 @@ class TargetBuilder:
 
         self.book = Book(store, universe)
         self.method = method
-        self.blend = blend_schedule(method, self.book.sleeve_returns, self.book.features, self.book.labels,
-                                    self.book.panel.dates)
+        self.blend = self.book.blend(method)
 
     def is_rebalance_day(self) -> bool:
         """Weekly rebalance: the latest stored session is the first of its week (the research rule)."""
@@ -112,6 +112,19 @@ class PortfolioDesk:
         self.engine.reconcile()
         state = self.engine._risk_state()
         return self.engine.desk_equity, state
+
+    def brake_drawdown(self, capital: float, day: str) -> float:
+        """Drawdown from the highest desk equity of the last DD_WINDOW decision days (the research rule); the
+        Governor's hard stop keeps using the all-time peak."""
+        try:
+            history = [h for h in self.store.load_json(EQUITY_HISTORY)["equity"] if h[0] != day]
+        except FileNotFoundError:
+            history = []
+        history = (history + [[day, capital]])[-DD_WINDOW:]
+        if getattr(self.store, "durable", True):
+            self.store.publish_json(EQUITY_HISTORY, {"equity": history})
+        peak = max(e for _, e in history)
+        return 1 - capital / peak if peak > 0 else 0.0
 
     def cancel_own_open_orders(self) -> list[str]:
         """Cancel this desk's unfilled orders from earlier cycles (crypto orders are good-till-cancelled)."""
@@ -217,10 +230,12 @@ class PortfolioDesk:
         cancelled = self.cancel_own_open_orders()
         if cancelled:  # partial fills may have changed positions: reconcile again before planning
             capital, state = self.capital_and_state()
-        weights, diagnostics = builder.targets(state.drawdown)
+        brake = self.brake_drawdown(capital, decision_day)
+        weights, diagnostics = builder.targets(brake)
+        diagnostics = {**diagnostics, "all_time_drawdown": state.drawdown}
         self._event("PORTFOLIO_TARGET", {"capital": capital, "weights": weights, **diagnostics})
         rebalance = getattr(builder, "is_rebalance_day", lambda: True)()
-        if not rebalance and drawdown_multiplier(state.drawdown) >= 1.0:
+        if not rebalance and drawdown_multiplier(brake) >= 1.0:
             summary = {"capital": capital, "halted": False, "orders": 0, "cancelled_open_orders": len(cancelled),
                        "results": {}, "skipped": {}, "planned": [], "note": "not a rebalance day; holding"}
             self._event("PORTFOLIO_CYCLE", summary)

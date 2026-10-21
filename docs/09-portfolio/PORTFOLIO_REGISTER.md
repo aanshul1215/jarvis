@@ -243,3 +243,25 @@ Owner decisions 2026-10-20: the revised ranker plan (`RANKER_DESIGN.md`) is appr
 - **Cross-asset trend:** its bond shorts earned about +7% in 2022, but equity-sector whipsaw lost about as much. The 2023 reversal then cost it again.
 - **Drawdown control lock-out:** the portfolio was more than 10% below its peak on 93% of 2023's days. So it ran at about 0.93× gross instead of about 1.6× through the 2023 rebound.
 - **Margin was not a cause:** about 0.3% a year.
+
+## Round 4 (v1.3.0), registered 2026-10-20 before its first run
+
+**Owner decision:** fix the flaws, then judge once on the untouched 2024+ period; no paper trading until then.
+
+**Honesty note.** These changes were made **after** seeing round 3's 2022–2023 confirmation. That period is therefore no longer a clean test. The decisive test is the holdout (2024-01-01 onward, never looked at by any version), followed by live paper trading.
+
+1. **Drawdown control.**
+   - The brake measures drawdown from the highest equity of the last 126 decisions (about six months), not from the all-time peak.
+   - Same shape as before: full size below 10%, falling to a quarter of size at 20%.
+   - **Why:** a brake keyed to the all-time peak keeps a recovering portfolio small for as long as it stays below its old high. Round 3 ran at about half size through all of 2023.
+   - **Unchanged:** the live Governor's 25% stop from the all-time peak (the owner's limit).
+   - **Live desk:** it keeps its own equity per decision day for the same rule.
+2. **Cross-asset trend uses asset-class instruments only:** equity indexes, bonds, commodities, and crypto (long only), as in Moskowitz, Ooi & Pedersen 2012. Sectors and single stocks are left to the momentum ranker. (Round 3's sector trend whipsawed.)
+3. **The momentum ranker gets a fixed 25% of the invested blend in every method except `ranker_only`.** It is the only sleeve validated on independent long history (French 49 industries, 1927–2015). The other sleeves share the remaining 75% in the method's proportions.
+4. **No sleeve is removed.** On pre-2022 evidence every sleeve had a positive development Sharpe; removing round 3's 2022–2023 losers would fit the confirmation period.
+5. **Everything else as round 3:** the same methods and selection rule, and the deflated Sharpe counting at least 25 trials.
+6. **Sequence:**
+   - development;
+   - then the confirmation, run once **for the record only**, because it is contaminated and not a gate;
+   - then the holdout, run once, as the decisive test. Its pass rule is unchanged: Sharpe ≥ SPY's, worst drawdown within 25%, and more than T-bills.
+   - Paper trading starts only if the holdout passes, or if the owner decides otherwise after seeing it.

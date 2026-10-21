@@ -247,3 +247,58 @@ def test_weekly_rebalance_holds_between_rebuilds_and_margin_is_charged():
     gross = res["gross"][3:]
     expected = -np.clip(gross - 1.0, 0, None) * allocator.MARGIN_RATE / 252
     assert np.allclose(daily_after_entry, expected, atol=1e-12) and gross.max() > 1.0
+
+
+def test_drawdown_brake_releases_after_its_window():
+    panel = synthetic_panel(700, seed=12)
+    flat = np.full(panel.shape, 100.0)
+    k = 300
+    flat[k:] *= 0.7                                                  # one crash, then flat for good
+    still = Panel(panel.dates, panel.assets, panel.classes, flat, flat, flat, flat, panel.volume)
+    lev = np.zeros(panel.shape)
+    lev[:, :30] = 0.05
+    vols = np.full(panel.shape, 0.01)
+    run = allocator.run_portfolio(still, [lev], np.ones((panel.shape[0], 1)), vols, np.zeros(panel.shape),
+                                  start=260, end=k + allocator.DD_WINDOW + 20)
+    gross = lambda t: np.abs(run["targets"][panel.dates[t]]).sum()
+    assert gross(k + 5) == pytest.approx(gross(k - 5) * allocator.DD_FLOOR)       # cut hard after the crash
+    assert gross(k + allocator.DD_WINDOW + 10) == pytest.approx(gross(k - 5))     # full size once it rolls out
+
+
+def test_ranker_share_is_fixed_and_keeps_the_invested_total():
+    rng = np.random.default_rng(13)
+    dates = weekdays(900)
+    r = rng.normal(0.0003, 0.01, (900, 4))
+    x = rng.normal(size=(900, len(FEATURES)))
+    labels = ["bull_calm"] * 900
+    for method in allocator.METHODS:
+        plain = allocator.blend_schedule(method, r, x, labels, dates)
+        fixed = allocator.blend_schedule(method, r, x, labels, dates, ranker_share=0.25)
+        assert np.allclose(fixed.sum(axis=1), plain.sum(axis=1))
+        if method != "ranker_only":
+            assert np.allclose(fixed[:, -1], 0.25 * plain.sum(axis=1))
+
+
+def test_live_drawdown_brake_uses_a_rolling_peak():
+    from types import SimpleNamespace
+    from jarvis.portfolio.executor import PortfolioDesk
+
+    class Store:
+        durable = True
+        saved = None
+
+        def load_json(self, name):
+            if self.saved is None:
+                raise FileNotFoundError(name)
+            return self.saved
+
+        def publish_json(self, name, value):
+            self.saved = value
+
+    desk = SimpleNamespace(store=Store())
+    assert PortfolioDesk.brake_drawdown(desk, 10_000, "d0") == 0.0
+    assert PortfolioDesk.brake_drawdown(desk, 8_500, "d1") == pytest.approx(0.15)
+    assert PortfolioDesk.brake_drawdown(desk, 8_400, "d1") == pytest.approx(0.16)       # a re-run replaces the day
+    for i in range(allocator.DD_WINDOW):
+        last = PortfolioDesk.brake_drawdown(desk, 8_400, f"e{i}")
+    assert last == 0.0 and len(desk.store.saved["equity"]) == allocator.DD_WINDOW

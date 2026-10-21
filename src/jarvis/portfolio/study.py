@@ -26,7 +26,7 @@ from ..history import UniverseAsset
 from ..macro import load_macro
 from ..sentiment import SentimentIndex
 from ..storage import LocalStorage, _canonical, _hash
-from .allocator import MARGIN_RATE, MARGIN_SPREAD, METHODS, RANKER, blend_schedule, run_portfolio
+from .allocator import MARGIN_RATE, MARGIN_SPREAD, METHODS, RANKER, RANKER_SHARE, blend_schedule, run_portfolio
 from .ranker import ranker, week_starts
 from .backtest import simulate, stats
 from .panel import Panel, build_panel
@@ -34,7 +34,7 @@ from .risk import vol_forecasts
 from .situation import FEATURES, capex_growth, raw_features, regime, standardise
 from .sleeves import ACTIVE, SLEEVES, Context
 
-VERSION = "1.2.0"  # round 3: momentum ranker, 2x gross, wider no-trade band, point-in-time margin rate
+VERSION = "1.3.0"  # round 4: 6-month drawdown reference, trend on asset classes only, ranker share 25%
 MIN_TRIALS = 25    # the deflated Sharpe counts at least this many trials (every look at the data so far)
 PERIODS = {"DEVELOPMENT": (date(2017, 1, 1), date(2021, 12, 31)),
            "CONFIRMATION": (date(2022, 1, 1), date(2023, 12, 31)),
@@ -69,6 +69,11 @@ class Book:
         rates = {row["observation_date"]: row["value"] for row in load_macro(store, "DTB3")}
         self.tbill = rates
         self.margin_rates = margin_schedule(p.dates, rates)
+
+    def blend(self, method: str) -> np.ndarray:
+        """The blend schedule every path uses (research, confirmation, holdout and the paper desk)."""
+        return blend_schedule(method, self.sleeve_returns, self.features, self.labels, self.panel.dates,
+                              ranker_share=RANKER_SHARE)
 
     def rows(self, period: str) -> tuple[int, int]:
         first, last = PERIODS[period]
@@ -175,7 +180,7 @@ def run_development(home: Path, book: Book) -> dict:
                for k, name in enumerate(book.sleeve_names)}
     results, trials = {}, []
     for method in METHODS:
-        blend = blend_schedule(method, book.sleeve_returns, book.features, book.labels, book.panel.dates)
+        blend = book.blend(method)
         run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
                             rebalance_rows=book.rebalance_rows, margin_rates=book.margin_rates)
         doubled = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
@@ -193,7 +198,7 @@ def run_development(home: Path, book: Book) -> dict:
     daily = [s / math.sqrt(252) for s in history + trials]
     dsr = deflated_sharpe(results[chosen]["_returns"], daily, MIN_TRIALS) if chosen else None
     if chosen:  # sensitivity, not used to choose: today's retail margin rate (7%) charged throughout
-        blend = blend_schedule(chosen, book.sleeve_returns, book.features, book.labels, book.panel.dates)
+        blend = book.blend(chosen)
         flat = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
                              rebalance_rows=book.rebalance_rows)
         results[chosen]["stats_margin_7pct"] = slice_stats(flat, first, last)
@@ -230,7 +235,7 @@ def run_once(home: Path, book: Book, split: str) -> dict:
              "spec": {"split": split, "method": chosen}}
     registry.append(claim)
     start_row = next(i for i, d in enumerate(book.panel.dates) if d >= PERIODS["DEVELOPMENT"][0])
-    blend = blend_schedule(chosen, book.sleeve_returns, book.features, book.labels, book.panel.dates)
+    blend = book.blend(chosen)
     run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start_row,
                         rebalance_rows=book.rebalance_rows, margin_rates=book.margin_rates)
     doubled = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start_row,

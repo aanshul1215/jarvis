@@ -34,6 +34,7 @@ GROUPS = {
     "crypto": ("BTC/USD", "ETH/USD"),
 }
 EQUITY_RISK = GROUPS["equity_index"] + GROUPS["sector"] + GROUPS["single_stock"]
+TREND_ASSETS = GROUPS["equity_index"] + GROUPS["bond"] + GROUPS["commodity"] + GROUPS["crypto"]
 # Pairs with a clear economic link (same index, sector leader vs its ETF, related commodities or bond tenors).
 PAIRS = (("SPY", "DIA"), ("QQQ", "XLK"), ("TLT", "IEF"), ("IEF", "TIP"), ("SHY", "IEF"), ("GLD", "SLV"),
          ("HYG", "LQD"), ("EFA", "EEM"), ("XLE", "XOM"), ("USO", "XLE"), ("DBC", "USO"), ("XLF", "JPM"),
@@ -144,11 +145,15 @@ def _shortable_mask(ctx: Context) -> np.ndarray:
 
 def trend_xasset(ctx: Context) -> np.ndarray:
     """Cross-asset time-series momentum: the average sign of the 3-, 6- and 12-month returns, inverse-volatility
-    weighted, long or short (shorts only where allowed). Every asset class, crypto included (long only)."""
+    weighted, long or short (shorts only where allowed). Round 4: asset-class instruments only (equity indexes,
+    bonds, commodities, crypto long only), as in Moskowitz, Ooi & Pedersen 2012; sectors and single stocks are left
+    to the momentum ranker."""
     c = ctx.panel.close
     signs = [np.sign(_lag_ratio(c, k)) for k in (63, 126, 252)]
     signal = np.nanmean(np.stack(signs), axis=0)
     signal = np.where(np.isfinite(_lag_ratio(c, 252)), signal, np.nan)
+    asset_class = np.isin(np.array(ctx.panel.assets), TREND_ASSETS)
+    signal = np.where(asset_class[None, :], signal, np.nan)
     signal = np.where(_shortable_mask(ctx) | (signal > 0), signal, 0.0)
     return risk_scale(ctx, _inverse_vol(ctx, np.isfinite(signal), np.nan_to_num(signal)))
 

@@ -16,12 +16,16 @@ Risk overlay, applied every day to the blended weights:
 2. caps: gross exposure 2.0 (round 3, owner decision), any one asset 30% of capital, crypto 20% in total, shorts
    30% in total;
 3. drawdown control: full size below a 10% drawdown, falling linearly to a quarter of size at 20%, kept at a
-   quarter beyond (the owner's 25% limit is also a hard stop in the live Governor).
+   quarter beyond. Round 4: the drawdown is measured from the highest equity of the last ``DD_WINDOW`` decisions
+   (about six months), not the all-time peak, so one bad year cannot keep the system small through the recovery
+   (round 3 ran at about half size through all of 2023). The owner's 25% limit from the all-time peak stays a hard
+   stop in the live Governor.
 """
 
 from __future__ import annotations
 
 import math
+from collections import deque
 from datetime import date
 
 import numpy as np
@@ -34,7 +38,8 @@ from .risk import correlation, portfolio_vol
 TARGET_VOL, GROSS_CAP, ASSET_CAP, CRYPTO_CAP, SHORT_CAP = 0.15, 2.0, 0.30, 0.20, 0.30
 MARGIN_RATE = 0.07    # a year on long exposure above the capital, when no point-in-time rate is given
 MARGIN_SPREAD = 0.03  # research: margin interest = the 3-month T-bill rate known that day + 3% a year
-DD_START, DD_FLOOR_AT, DD_FLOOR = 0.10, 0.20, 0.25
+DD_START, DD_FLOOR_AT, DD_FLOOR, DD_WINDOW = 0.10, 0.20, 0.25, 126
+RANKER_SHARE = 0.25  # round 4: the momentum ranker's fixed share of the invested blend (not for ranker_only)
 SHRINK, HORIZON, MIN_TRAIN_ROWS, RECENT_WINDOW, MIN_REGIME_ROWS = 0.5, 21, 504, 126, 60
 METHODS = ("equal", "recent", "regime", "situational", "ranker_only")
 RANKER = "momentum_ranker"  # sleeve name of the ranker in the blend (the last sleeve when present)
@@ -52,7 +57,23 @@ def _score_to_blend(score: np.ndarray) -> np.ndarray:
 
 
 def blend_schedule(method: str, sleeve_returns: np.ndarray, features: np.ndarray, labels: list[str],
-                   dates: list[date]) -> np.ndarray:
+                   dates: list[date], ranker_share: float | None = None) -> np.ndarray:
+    """(T, S) blend weights per row; with ``ranker_share`` the last sleeve (the ranker) gets that share of the
+    invested total and the others share the rest in the method's proportions."""
+    out = _blend_schedule(method, sleeve_returns, features, labels, dates)
+    if ranker_share is None or method == "ranker_only":
+        return out
+    total, others = out.sum(axis=1), out[:, :-1].sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        scale = np.where(others > 0, total * (1 - ranker_share) / others, 0.0)
+    fixed = out.copy()
+    fixed[:, :-1] *= scale[:, None]
+    fixed[:, -1] = total * ranker_share
+    return fixed
+
+
+def _blend_schedule(method: str, sleeve_returns: np.ndarray, features: np.ndarray, labels: list[str],
+                    dates: list[date]) -> np.ndarray:
     """(T, S) blend weights per row. ``sleeve_returns[t]`` is what each sleeve earned from row t's open to row
     t + 1's open, so it is complete only at row t + 1's open: the weights set at a month-start row m (after its
     close) use rows up to m - 1 only, and hold until the next month start."""
@@ -157,7 +178,8 @@ def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndar
     borrow = BORROW_BPS_PER_YEAR / 10_000 / 252
     held = np.zeros(n)
     equity, peak = 1.0, 1.0
-    known_equity, known_peak = 1.0, 1.0  # equity through the return that ended at row t's open (known at its close)
+    known_equity = 1.0  # equity through the return that ended at row t's open (known at its close)
+    known_history: deque[float] = deque(maxlen=DD_WINDOW)
     applied_cut = 1.0  # the drawdown multiplier in force since the last rebuild
     out = {"dates": [], "returns": [], "turnover": [], "gross": [], "net": [], "short": [], "drawdown": [], "weights": {}, "targets": {}}
     for t in range(start, end):
@@ -165,8 +187,9 @@ def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndar
         invested = float(b.sum())
         mix = np.tensordot(b / invested if invested > 0 else b, stack[:, t, :], axes=1)
         # The previous decision's return ends at row t + 1's open, after this decision: use the equity before it.
-        drawdown = 1 - known_equity / known_peak
-        known_equity, known_peak = equity, peak
+        known_history.append(known_equity)
+        drawdown = 1 - known_equity / max(known_history)
+        known_equity = equity
         cut = drawdown_multiplier(drawdown)
         if rebalance_rows is None or t in rebalance_rows or not held.any():
             target = overlay(mix, invested, t, panel, vols, returns, drawdown)
