@@ -95,3 +95,52 @@ def test_restart_reconciles_shorts_and_a_rerun_day_places_no_duplicates(tmp_path
     with LocalStorage(tmp_path / "d") as store:                                            # a new process
         again = desk(store, broker).run_once(targets, decision_day="2026-10-21")
         assert broker.positions == before and again["orders"] == 0                       # reconciled, nothing new
+
+
+def test_closing_a_short_buys_back_exactly_and_a_reduce_never_flips(tmp_path):
+    with LocalStorage(tmp_path / "d") as store:
+        broker = MockBroker(cash=100_000, allow_short=True)
+        d = desk(store, broker)
+        d.run_once(FixedTargets({"TLT": -0.10, "SPY": 0.12}), decision_day="2026-10-21")
+        assert broker.positions == {"TLT": -10, "SPY": 2}                               # $1,200 at ~$501 = 2 shares
+        d.run_once(FixedTargets({"TLT": 0.0, "SPY": -0.10}), decision_day="2026-10-22")    # close short; flip SPY
+        assert broker.positions["TLT"] == 0                                                 # no 1-share stub
+        assert broker.positions["SPY"] == 0                                                 # flip: closed first...
+        d.run_once(FixedTargets({"SPY": -0.11}), decision_day="2026-10-23")              # capital is a bit under $10k
+        assert broker.positions["SPY"] == -2                                                # ...short opened next cycle
+
+
+def test_a_refused_order_is_recorded_and_does_not_lock_the_desk(tmp_path):
+    class Refusing(MockBroker):
+        def submit(self, client_order_id, asset_id, asset_class, side, quantity, reference_price):
+            if asset_id == "GLD":
+                from jarvis.broker import UncertainSubmission
+                raise UncertainSubmission("broker said no")
+            return super().submit(client_order_id, asset_id, asset_class, side, quantity, reference_price)
+
+    with LocalStorage(tmp_path / "d") as store:
+        broker = Refusing(cash=100_000, allow_short=True)
+        first = desk(store, broker).run_once(FixedTargets({"GLD": 0.10, "SPY": 0.12}), decision_day="2026-10-21")
+        assert first["results"]["GLD"].startswith("REJECTED") and broker.positions["SPY"] == 2
+        second = desk(store, broker).run_once(FixedTargets({"SPY": 0.12}), decision_day="2026-10-22")
+        assert second["orders"] == 0                                                        # reconciled, no SAFE
+
+
+def test_unshortable_assets_and_disabled_crypto_are_respected(tmp_path):
+    with LocalStorage(tmp_path / "d") as store:
+        broker = MockBroker(cash=100_000, allow_short=False)
+        result = desk(store, broker, crypto_enabled=False).run_once(
+            FixedTargets({"TLT": -0.10, "BTC/USD": 0.05}), decision_day="2026-10-21")
+        assert result["skipped"]["TLT"] == "NOT_SHORTABLE" and "BTC/USD" not in broker.positions
+
+
+def test_unfilled_orders_from_an_earlier_cycle_are_cancelled_before_planning(tmp_path):
+    with LocalStorage(tmp_path / "d") as store:
+        broker = MockBroker(cash=100_000, allow_short=True, fill_fraction=0.5)
+        d = desk(store, broker)
+        d.run_once(FixedTargets({"TLT": 0.10}), decision_day="2026-10-21")                 # 9 ordered, 4.5 filled
+        assert broker.positions["TLT"] == 4.5 and broker.state().open_order_ids
+        result = d.run_once(FixedTargets({"TLT": 0.10}), decision_day="2026-10-22")
+        assert result["cancelled_open_orders"] == 1
+        assert not [c for c in broker.state().open_order_ids if broker.orders[c].status == "PARTIALLY_FILLED"
+                    and c in result.get("results", {})]

@@ -138,8 +138,9 @@ class PortfolioRegistry:
 
 
 def fingerprint(book: Book) -> str:
-    key = {"version": VERSION, "assets": book.panel.assets, "sleeves": book.sleeve_names, "features": FEATURES,
-           "first": book.panel.dates[0].isoformat(), "last": book.panel.dates[-1].isoformat()}
+    """Identifies the system design (not the data's end date, which moves every day), so the once-only rule for
+    the confirmation and the holdout cannot be side-stepped by re-running development on newer data."""
+    key = {"version": VERSION, "assets": book.panel.assets, "sleeves": book.sleeve_names, "features": FEATURES}
     return _hash(_canonical(key))[:20]
 
 
@@ -148,7 +149,9 @@ def run_development(home: Path, book: Book) -> dict:
     registry = PortfolioRegistry(home)
     first, last = PERIODS["DEVELOPMENT"]
     start = next(i for i, d in enumerate(book.panel.dates) if d >= first)
-    end = max(i for i, d in enumerate(book.panel.dates) if d <= last) + 1
+    # Decision t earns the return dated row t + 1, so the last development decision is the row before the last
+    # development day: no confirmation-period return enters development.
+    end = max(i for i, d in enumerate(book.panel.dates) if d <= last)
     sleeves = {name: slice_stats({"dates": book.panel.dates, "returns": book.sleeve_returns[:, k]}, first, last)
                for k, name in enumerate(book.sleeve_names)}
     results, trials = {}, []
@@ -163,14 +166,19 @@ def run_development(home: Path, book: Book) -> dict:
                            "_returns": run["returns"]}
         trials.append(results[method]["stats"].get("sharpe") or 0.0)
     eligible = [m for m in METHODS if results[m]["stats"].get("max_drawdown", -1) >= -MAX_DRAWDOWN]
-    chosen = max(eligible or METHODS, key=lambda m: results[m]["stats"].get("sharpe") or -9)
-    daily = [s / math.sqrt(252) for s in trials]
-    dsr = deflated_sharpe(results[chosen]["_returns"], daily)
+    chosen = max(eligible, key=lambda m: results[m]["stats"].get("sharpe") or -9) if eligible else None
+    # Every development trial ever logged counts against the chosen one (register: every version is a trial).
+    history = [v["stats"].get("sharpe") or 0.0 for r in registry.records() if r["spec"]["split"] == "DEVELOPMENT"
+               for v in r.get("methods", {}).values()]
+    daily = [s / math.sqrt(252) for s in history + trials]
+    dsr = deflated_sharpe(results[chosen]["_returns"], daily) if chosen else None
     bench = {k: slice_stats(v, first, last) for k, v in benchmarks(book, start).items()}
     for v in results.values():
         v.pop("_returns")
     record = {"created_at": iso(utc_now()), "fingerprint": fingerprint(book), "version": VERSION,
-              "spec": {"split": "DEVELOPMENT", "period": [first.isoformat(), last.isoformat()]}, "status": "COMPLETED",
+              "spec": {"split": "DEVELOPMENT", "period": [first.isoformat(), last.isoformat()]},
+              "status": "COMPLETED" if chosen else "NO_ELIGIBLE_CONFIGURATION",
+              "data_last_date": book.panel.dates[-1].isoformat(),
               "methods": results, "chosen": chosen, "deflated_sharpe": dsr, "benchmarks": bench, "sleeves": sleeves,
               "regime_share": {r: book.labels[start:end].count(r) / (end - start) for r in set(book.labels[start:end])}}
     return registry.append(record)
@@ -181,9 +189,10 @@ def run_once(home: Path, book: Book, split: str) -> dict:
     registry = PortfolioRegistry(home)
     fp = fingerprint(book)
     records = registry.records()
-    developed = [r for r in records if r["fingerprint"] == fp and r["spec"]["split"] == "DEVELOPMENT"]
+    developed = [r for r in records if r["fingerprint"] == fp and r["spec"]["split"] == "DEVELOPMENT"
+                 and r.get("chosen")]
     if not developed:
-        raise PermissionError("run the development study first")
+        raise PermissionError("no development result with an eligible configuration for this design")
     if any(r["fingerprint"] == fp and r["spec"]["split"] == split for r in records):
         raise PermissionError(f"{split} already evaluated for this configuration; it may be used once")
     if split == "HOLDOUT" and not any(r["fingerprint"] == fp and r["spec"]["split"] == "CONFIRMATION"

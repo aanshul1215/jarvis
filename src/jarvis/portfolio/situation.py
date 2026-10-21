@@ -30,27 +30,47 @@ FEATURES = ("spy_trend", "spy_vol_shift", "vix", "vix_term", "credit_rel", "baa_
 MIN_STANDARDISE = 252
 
 
+def quarters_known(rows: list[tuple[datetime, date, date, float]], moment: datetime) -> dict[date, float]:
+    """Quarterly values known at ``moment`` from (available_at, period_start, period_end, value) rows.
+
+    Cash-flow items are often filed only year-to-date (3, 6, 9, 12 months from the fiscal year start), so a quarter
+    is the difference between consecutive year-to-date totals of the same fiscal year. Where a period was filed more
+    than once, the latest filing public at ``moment`` wins.
+    """
+    latest: dict[tuple[date, date], tuple[datetime, float]] = {}
+    for available, start, end, value in rows:
+        if available <= moment and ((start, end) not in latest or available >= latest[(start, end)][0]):
+            latest[(start, end)] = (available, value)
+    by_year: dict[date, list[tuple[date, float]]] = {}
+    for (start, end), (_, value) in latest.items():
+        by_year.setdefault(start, []).append((end, value))
+    quarters: dict[date, float] = {}
+    for start, items in by_year.items():
+        previous_end, previous_total = start, 0.0
+        for end, total in sorted(items):
+            if 80 <= (end - previous_end).days <= 100:   # one quarter on from the previous cumulative point
+                quarters[end] = total - previous_total
+            previous_end, previous_total = end, total
+    return quarters
+
+
 def capex_growth(store: LocalStorage, dates: list[date]) -> np.ndarray:
-    """Hyperscalers' capital spending growth known at each date: the sum of each company's latest reported quarter
-    over the same quarter a year earlier. NaN until all four have a year-on-year pair."""
-    quarters: dict[str, list[tuple[datetime, date, float]]] = {}
+    """Hyperscalers' capital spending growth known at each date: the four companies' latest quarters over the same
+    quarters a year earlier (each quarter derived as above). NaN until all four have a year-on-year pair."""
+    data: dict[str, list[tuple[datetime, date, date, float]]] = {}
     for ticker in HYPERSCALERS:
-        rows = []
-        for r in store.read_table("edgar", "facts", ticker):
-            if r["metric"] != "capex" or not r["duration_days"] or not 80 <= r["duration_days"] <= 100:
-                continue
-            rows.append((parse_utc(r["available_at"]), date.fromisoformat(r["period_end"]), float(r["value"])))
-        quarters[ticker] = sorted(rows)
+        data[ticker] = [(parse_utc(r["available_at"]), date.fromisoformat(r["period_start"]),
+                         date.fromisoformat(r["period_end"]), abs(float(r["value"])))
+                        for r in store.read_table("edgar", "facts", ticker)
+                        if r["metric"] == "capex" and r["period_start"] and r["duration_days"]
+                        and r["duration_days"] <= 380]
     out = np.full(len(dates), np.nan)
     for i, d in enumerate(dates):
         moment = datetime.combine(d, time(21, 15), tzinfo=timezone.utc)
         now_sum = before_sum = 0.0
         complete = True
-        for ticker, rows in quarters.items():
-            known: dict[date, float] = {}
-            for available, end, value in rows:
-                if available <= moment:
-                    known[end] = value  # a later filing of the same quarter replaces the earlier one
+        for rows in data.values():
+            known = quarters_known(rows, moment)
             if not known:
                 complete = False
                 break
@@ -59,8 +79,8 @@ def capex_growth(store: LocalStorage, dates: list[date]) -> np.ndarray:
             if not prior:
                 complete = False
                 break
-            now_sum += abs(known[latest])
-            before_sum += abs(known[prior[0]])
+            now_sum += known[latest]
+            before_sum += known[prior[0]]
         if complete and before_sum > 0:
             out[i] = now_sum / before_sum - 1
     return out

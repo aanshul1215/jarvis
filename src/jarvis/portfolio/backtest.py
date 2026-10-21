@@ -44,11 +44,12 @@ def simulate(panel: Panel, weights: np.ndarray, *, start: int = 0, end: int | No
     dates, rets, turnover, gross, net, short = [], [], [], [], [], []
     for t in range(start, end):
         target = np.nan_to_num(weights[t], nan=0.0)
-        tradable = np.isfinite(opens[t + 1]) & np.isfinite(opens[t + 2])
-        target = np.where(tradable, target, np.where(np.isfinite(opens[t + 1]), 0.0, held))
+        tradable = np.isfinite(opens[t + 1])
+        target = np.where(tradable, target, held)  # no price to trade at: keep the position as it is
         new = apply_band(target, held, band)
         traded = np.abs(new - held)
-        move = np.where(tradable, opens[t + 2] / opens[t + 1] - 1, 0.0)
+        priced = tradable & np.isfinite(opens[t + 2])
+        move = np.where(priced, opens[t + 2] / np.where(priced, opens[t + 1], 1.0) - 1, 0.0)
         r = float(new @ move) - float(traded @ cost) - float(np.clip(-new, 0, None).sum() * borrow)
         # Weights drift with prices until the next decision.
         value = 1 + float(new @ move)

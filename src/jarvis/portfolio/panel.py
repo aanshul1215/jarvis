@@ -91,7 +91,7 @@ def build_panel(store: LocalStorage, universe: list[UniverseAsset], *, start: da
         days = sorted(by_utc_day)
         j = 0
         for d in calendar:
-            # Last crypto bar of a UTC day on or before d; volume and range summed over the days folded in.
+            # Last crypto bar of a UTC day on or before d (weekend moves reach the next row through its close).
             while j < len(days) and days[j] <= d:
                 j += 1
             if j == 0:

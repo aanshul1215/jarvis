@@ -198,7 +198,7 @@ def pairs(ctx: Context, pair_list=PAIRS) -> np.ndarray:
             continue
         ia, ib = ctx.panel.index(a), ctx.panel.index(b)
         la, lb = np.log(c[:, ia]), np.log(c[:, ib])
-        state, age, beta_used = 0, 0, 1.0
+        state, age, beta_used, blocked = 0, 0, 1.0, 0
         for t in range(252, c.shape[0]):
             x, y = lb[t - 251:t + 1], la[t - 251:t + 1]
             if not (np.all(np.isfinite(x)) and np.all(np.isfinite(y))):
@@ -214,11 +214,15 @@ def pairs(ctx: Context, pair_list=PAIRS) -> np.ndarray:
             lagged, diff = spread[:-1] - spread[:-1].mean(), np.diff(spread)
             phi = float(lagged @ diff / (lagged @ lagged)) if lagged @ lagged > 0 else 0.0
             half_life = -math.log(2) / phi if phi < 0 else float("inf")
+            if blocked and (abs(z) < 2 or np.sign(z) != blocked):
+                blocked = 0  # the spread has come back (or flipped): the pair may trade again
             if state:
                 age += 1
-                if abs(z) < 0.5 or abs(z) > 4 or age >= 20 or np.sign(z) != state:
+                if abs(z) > 4 or age >= 20:
+                    state, blocked = 0, state  # stopped out or timed out: no re-entry on the same divergence
+                elif abs(z) < 0.5 or np.sign(z) != state:
                     state = 0
-            if not state and abs(z) >= 2 and 1 <= half_life <= 30 and 0.2 <= beta <= 5:
+            if not state and abs(z) >= 2 and np.sign(z) != blocked and 1 <= half_life <= 30 and 0.2 <= beta <= 5:
                 state, age, beta_used = int(np.sign(z)), 0, float(beta)
             if state:
                 # z > 0: a is rich -> short a, long beta x b, in value terms so the hedge holds. Each pair is
@@ -356,7 +360,9 @@ def earnings_drift(ctx: Context) -> np.ndarray:
         events = [parse_utc(e["available_at"]) for e in ctx.earnings(asset, ctx.decision_time(t_total - 1))]
         for t in range(21, t_total):
             bar_end = datetime.combine(ctx.panel.dates[t], time(16, 0), tzinfo=NEW_YORK)  # the session close
-            if not any(bar_end - timedelta(days=1, hours=1) < e < bar_end for e in events):
+            previous_close = datetime.combine(ctx.panel.dates[t - 1], time(16, 0), tzinfo=NEW_YORK)
+            # Released after the previous session closed (so Friday-evening and weekend releases count on Monday).
+            if not any(previous_close < e <= bar_end for e in events):
                 continue
             avg = np.nanmean(vol[t - 20:t, j])
             if c[t - 1, j] > 0 and c[t, j] / c[t - 1, j] - 1 > 0.02 and avg > 0 and vol[t, j] >= 1.5 * avg:

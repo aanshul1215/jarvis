@@ -103,3 +103,29 @@ features).
 - The universe's single stocks and the 2017–2021 bull market make SPY a strong benchmark.
 - The most likely benefit is a smoother path (diversification, trend's crisis protection, risk control) rather than a large return edge.
 - Paper trading then provides out-of-sample evidence with real fills.
+
+## Amendments before the first real-data run (2026-10-20, after an independent code review)
+
+None of these was informed by results: no real-data portfolio run had happened.
+
+1. **Drawdown control** uses only the equity known at the decision. The previous decision's return ends at the next open, so it is excluded. (Review finding: the first version peeked one overnight move ahead.)
+2. **Pairs:** after a stop (|z| > 4) or a time exit (20 days), the same divergence is not traded again until the spread returns inside 2 standard deviations or flips sign. A hedge-ratio filter of 0.2–5 applies, and the half-life uses the AR(1) slope.
+3. **Earnings drift (weight sleeve):** a release counts if it became public after the previous session's close and by this session's close. Friday-evening and weekend releases therefore count on Monday. The original `earnings-drift@1.0.0` strategy keeps its registered 25-hour window.
+4. **The earlier library's ATR stop-losses are not part of the weight sleeves.** Exits come from each rule's own signal and maximum holding period. The portfolio-level drawdown control replaces per-trade stops.
+5. **Capital spending:** quarters are derived from year-to-date filings (most companies report cash-flow items year-to-date), counted from the date each filing became public.
+6. **Missing prices:** a position with no price at the next open is kept, not closed early because of data that appears later.
+7. **Development selection:**
+   - If no blend method stays within the 25% drawdown limit, nothing is chosen.
+   - The deflated Sharpe counts every development trial ever logged.
+   - The development returns end on 2021-12-31.
+   - The once-only rule for confirmation and holdout is keyed on the system design (version, assets, sleeves, features), not on the data's end date.
+8. **Executor:**
+   - It cancels its own unfilled orders before each cycle.
+   - A close buys or sells back exactly the position.
+   - A long-to-short flip takes two cycles.
+   - Adding risk is sized at the limit price.
+   - A refused submission is recorded as rejected.
+   - Shorts are checked against the broker's shortable list.
+   - Crypto trades only if enabled.
+   - The total-holdings and buying-power caps are checked.
+9. **Daily routine:** the full adjusted price history is re-downloaded, so dividends and splits re-adjust every earlier price consistently.

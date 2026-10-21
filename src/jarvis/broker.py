@@ -42,6 +42,10 @@ class BrokerAdapter(ABC):
     @abstractmethod
     def equity_market_open(self) -> bool: ...
 
+    def shortable(self, asset_id: str) -> bool:
+        """Whether the broker will accept a short sale of this asset now (default: no)."""
+        return False
+
     @abstractmethod
     def state(self) -> BrokerState: ...
 
@@ -87,6 +91,9 @@ class MockBroker(BrokerAdapter):
 
     def equity_market_open(self) -> bool:
         return True
+
+    def shortable(self, asset_id: str) -> bool:
+        return self.allow_short and "/" not in asset_id
 
     def submit(self, client_order_id: str, asset_id: str, asset_class: AssetClass,
                side: str, quantity: float, reference_price: float) -> BrokerOrder:
@@ -182,6 +189,14 @@ class AlpacaPaperBroker(BrokerAdapter):
 
     def equity_market_open(self) -> bool:
         return bool(self.client.get_clock().is_open)
+
+    def shortable(self, asset_id: str) -> bool:
+        """Alpaca accepts a short only for shortable, easy-to-borrow stocks and ETFs (never crypto)."""
+        try:
+            asset = self.client.get_asset(asset_id)
+        except Exception:
+            return False
+        return bool(getattr(asset, "shortable", False) and getattr(asset, "easy_to_borrow", False))
 
     def submit(self, client_order_id: str, asset_id: str, asset_class: AssetClass,
                side: str, quantity: float, reference_price: float) -> BrokerOrder:

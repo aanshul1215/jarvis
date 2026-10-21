@@ -367,8 +367,10 @@ def main(argv: list[str] | None = None) -> int:
             steps.append(("edgar-update", base + ["edgar-update", "--universe", args.universe]))
         if _dt.now().weekday() == 0:  # the Fed and BLS calendars change rarely: refresh on Mondays
             steps.append(("calendar-update", base + ["calendar-update"]))
-        start = (_dt.now() - __import__("datetime").timedelta(days=10)).date().isoformat()
-        steps += [("backfill", base + ["backfill", "--universe", args.universe, "--start", start, "--timeframes", "1Day"]),
+        # The full adjusted history is re-downloaded each day (a few seconds per asset): a dividend or split changes
+        # every earlier adjusted price, and a short refresh would leave a false jump where old and new bars meet.
+        steps += [("backfill", base + ["backfill", "--universe", args.universe, "--start", "2016-01-01",
+                                       "--timeframes", "1Day"]),
                   ("collect", base + ["collect", "--universe", args.universe]),
                   ("score-news", base + ["score-news"])]
         if args.enable_orders:
@@ -392,16 +394,23 @@ def main(argv: list[str] | None = None) -> int:
             record = run_development(home, book) if args.split == "DEVELOPMENT" else run_once(home, book, args.split)
             print(json.dumps({k: v for k, v in record.items() if k != "hash"}, indent=2, default=str))
             return 0
-        developed = [r for r in PortfolioRegistry(home).records() if r["spec"]["split"] == "DEVELOPMENT"]
+        from .portfolio.study import VERSION
+        records = PortfolioRegistry(home).records()
+        developed = [r for r in records if r["spec"]["split"] == "DEVELOPMENT" and r.get("chosen")
+                     and r.get("version") == VERSION]
         if not developed:
-            print(json.dumps({"result": "BLOCKED", "reason": "run portfolio-study (DEVELOPMENT) first"}))
+            print(json.dumps({"result": "BLOCKED", "reason": "no development result for this system version"}))
             return 2
         method = developed[-1]["chosen"]
+        confirmations = [r for r in records if r["spec"]["split"] == "CONFIRMATION" and r.get("status") == "COMPLETED"
+                         and r["fingerprint"] == developed[-1]["fingerprint"]]
+        evidence = {"development_fingerprint": developed[-1]["fingerprint"], "method": method,
+                    "confirmation_passed": confirmations[-1]["passed"] if confirmations else None}
         from .portfolio.executor import PortfolioDesk, TargetBuilder
         if args.command == "portfolio-targets":
             with LocalStorage(home, writer=False) as store:
                 weights, diagnostics = TargetBuilder(store, universe, method).targets(drawdown=0.0)
-            print(json.dumps({"method": method, "weights": {k: round(v, 4) for k, v in sorted(weights.items())},
+            print(json.dumps({**evidence, "weights": {k: round(v, 4) for k, v in sorted(weights.items())},
                               **diagnostics}, indent=2, default=str))
             return 0
         if not args.enable_orders:
@@ -419,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
             desk = PortfolioDesk(store, AlpacaPaperBroker(key, secret, enable_orders=True), AlpacaMarketData(key, secret),
                                  policy, universe)
             result = desk.run_once(builder, decision_day=_datetime.now(NEW_YORK).date().isoformat())
-        print(json.dumps(result, indent=2, default=str))
+        print(json.dumps({**evidence, **result}, indent=2, default=str))
         return 0
     elif args.command == "score-news":
         from .sentiment import FinbertScorer, score_archive

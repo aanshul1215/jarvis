@@ -68,7 +68,8 @@ def blend_schedule(method: str, sleeve_returns: np.ndarray, features: np.ndarray
                 var = window.var(axis=0)
                 current = _score_to_blend(np.where(var > 0, window.mean(axis=0) / var, 0.0))
             elif method == "regime":
-                same = [i for i in range(1, m) if labels[i] == labels[m]]
+                # Label i is known at row i's close; the return earned after it is r[i + 1] (complete by row m).
+                same = [i + 1 for i in range(1, m - 1) if labels[i] == labels[m]]
                 if len(same) >= MIN_REGIME_ROWS:
                     window = r[same]
                     var = window.var(axis=0)
@@ -137,17 +138,21 @@ def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndar
     borrow = BORROW_BPS_PER_YEAR / 10_000 / 252
     held = np.zeros(n)
     equity, peak = 1.0, 1.0
-    out = {"dates": [], "returns": [], "turnover": [], "gross": [], "net": [], "short": [], "drawdown": [], "weights": {}}
+    known_equity, known_peak = 1.0, 1.0  # equity through the return that ended at row t's open (known at its close)
+    out = {"dates": [], "returns": [], "turnover": [], "gross": [], "net": [], "short": [], "drawdown": [], "weights": {}, "targets": {}}
     for t in range(start, end):
         b = blend[t]
         invested = float(b.sum())
         mix = np.tensordot(b / invested if invested > 0 else b, stack[:, t, :], axes=1)
-        target = overlay(mix, invested, t, panel, vols, returns, 1 - equity / peak)
-        tradable = np.isfinite(panel.open[t + 1]) & np.isfinite(panel.open[t + 2])
-        target = np.where(tradable, target, np.where(np.isfinite(panel.open[t + 1]), 0.0, held))
+        # The previous decision's return ends at row t + 1's open, after this decision: use the equity before it.
+        target = overlay(mix, invested, t, panel, vols, returns, 1 - known_equity / known_peak)
+        known_equity, known_peak = equity, peak
+        tradable = np.isfinite(panel.open[t + 1])
+        target = np.where(tradable, target, held)
         new = apply_band(target, held, BAND)
         traded = np.abs(new - held)
-        move = np.where(tradable, panel.open[t + 2] / panel.open[t + 1] - 1, 0.0)
+        priced = tradable & np.isfinite(panel.open[t + 2])
+        move = np.where(priced, panel.open[t + 2] / np.where(priced, panel.open[t + 1], 1.0) - 1, 0.0)
         r = float(new @ move) - float(traded @ cost) - float(np.clip(-new, 0, None).sum() * borrow)
         value = 1 + float(new @ move)
         held = new * (1 + move) / value if value > 0 else np.zeros(n)
@@ -160,7 +165,8 @@ def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndar
         out["net"].append(float(new.sum()))
         out["short"].append(float(np.clip(-new, 0, None).sum()))
         out["drawdown"].append(1 - equity / peak)
-        out["weights"][panel.dates[t]] = new
+        out["weights"][panel.dates[t]] = new          # what was held after trading (drifts to the trade time)
+        out["targets"][panel.dates[t]] = target       # the decision itself (known at row t's close)
     for key in ("returns", "turnover", "gross", "net", "short", "drawdown"):
         out[key] = np.array(out[key])
     return out

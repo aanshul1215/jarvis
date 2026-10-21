@@ -52,6 +52,10 @@ All write under `JARVIS_HOME` and record a journal event. None places an order.
 
 | `jarvis model-study --kind volatility\|regime\|risk [--source fred\|bars --universe FILE --split DEVELOPMENT]` | `macro-update` (fred) or `backfill` (bars) | Phase 5 pre-registered comparison of each situational-awareness model with its baseline (`docs/07-awareness/MODEL_REGISTER.md`); appends to `research/model_studies.jsonl`; `--split HOLDOUT` once per study |
 | `jarvis selector-study --universe FILE [--strategy ID@VERSION ... --split DEVELOPMENT]` | stored bars | Phase 7: replays each strategy alone, builds month-by-month allocations from past results only, and runs the pre-registered chain (equal weight, regime lookup, meta-label filter, contextual bandit) through combined replays (`docs/08-selector/SELECTOR_REGISTER.md`); appends to `research/selector_studies.jsonl` |
+| `jarvis portfolio-study --universe FILE [--split DEVELOPMENT\|CONFIRMATION\|HOLDOUT]` | stored bars, SEC, news scores | The portfolio system (`docs/09-portfolio/PORTFOLIO_REGISTER.md`): 12 strategy sleeves blended by situation, risk overlay, 25% drawdown control. Development logs every blend method as a trial and picks one; confirmation (2022–23) and holdout (2024+) run once each |
+| `jarvis portfolio-targets --universe FILE` | a development run | Today's target weights, blend and situation, without trading |
+| `jarvis portfolio-paper --universe FILE --enable-orders` | owner policy with `allocated_capital` and `portfolio` approved; Alpaca paper keys | One guarded paper cycle of the portfolio system (shorts capped, loss stops, durable journal) |
+| `jarvis daily --universe FILE [--enable-orders]` | the above | Morning routine: macro, SEC (if `JARVIS_SEC_USER_AGENT`), calendars (Mondays), price backfill, news/social collection, sentiment scoring, then one portfolio paper cycle |
 | `jarvis cost-report` | paper fills | Realised cost of each filled order against the fixed assumption and the cost model (needs 50+ fills) |
 
 Backtests accept `--sizing volatility --volatility-model <winner>` to size each entry by the forecast volatility (daily bars).

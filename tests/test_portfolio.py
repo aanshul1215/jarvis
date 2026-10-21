@@ -144,3 +144,35 @@ def test_simulation_arithmetic_and_band():
     assert np.allclose(apply_band(np.array([0.203, 0.0]), held, 0.005), [0.2, 0.0])     # small change skipped; exit kept
     s = stats(sim["dates"], sim["returns"])
     assert s["days"] == len(sim["returns"]) and s["max_drawdown"] <= 0
+
+
+def test_portfolio_drawdown_control_ignores_the_next_open():
+    panel = synthetic_panel(420, seed=8)
+    ctx = context(panel)
+    w = [sl.trend_xasset(ctx), sl.low_volatility(ctx)]
+    blend = np.full((panel.shape[0], 2), 0.5)
+    k = 380
+    clean = allocator.run_portfolio(panel, w, blend, ctx.vols, ctx.returns, start=260, end=k + 1)
+    bumped = panel.open.copy()
+    bumped[k + 1] *= 0.5                                       # a crash in the open after decision k
+    dirty_panel = Panel(panel.dates, panel.assets, panel.classes, bumped, panel.high, panel.low, panel.close, panel.volume)
+    dirty = allocator.run_portfolio(dirty_panel, w, blend, ctx.vols, ctx.returns, start=260, end=k + 1)
+    assert np.allclose(clean["targets"][panel.dates[k]], dirty["targets"][panel.dates[k]])
+
+
+def test_pairs_do_not_reenter_after_a_stop():
+    panel = synthetic_panel(400, seed=9)
+    a, b = panel.index("GLD"), panel.index("SLV")
+    close = panel.close.copy()
+    rng = np.random.default_rng(2)
+    base = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, 400)))
+    close[:, b] = base
+    close[:, a] = base * np.exp(rng.normal(0, 0.004, 400))
+    close[300:, a] *= np.linspace(1, 1.25, 100)                # a drifts away for good: stop, no re-entry
+    p2 = Panel(panel.dates, panel.assets, panel.classes, close, close, close, close, panel.volume)
+    ctx = context(p2)
+    w = sl.pairs(ctx, pair_list=(("GLD", "SLV"),))
+    in_trade = w[:, a] != 0
+    entries = int(np.sum(in_trade[1:] & ~in_trade[:-1]))
+    later = in_trade[340:]
+    assert entries >= 1 and not later[-30:].any()              # the runaway divergence is not traded again
