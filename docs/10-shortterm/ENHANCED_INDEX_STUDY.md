@@ -52,3 +52,30 @@ The signals themselves are real (study 3: +1.8% net per event trade; momentum va
 - exits caused by a stock's data ending.
 
 **Practical note for live use:** 300 positions on $10,000 means positions of about $10–100, which needs fractional shares. Alpaca supports these for most US stocks. A live version may hold only the largest-weight names; that would be its own registered variant.
+
+## Result (run once, 2026-10-21; version enhanced-index-1.0.0)
+
+**Development, 2017-01-03 to 2021-12-31.**
+
+| | CAGR | Sharpe above T-bills | Worst drawdown | Volatility | Turnover/yr |
+|---|---|---|---|---|---|
+| **X1 enhanced index (registered)** | 8.4% (8.0% at 2× costs) | 0.51 | −33.3% | 16.4% | 4.7× |
+| C0 inverse-volatility 300, no tilt, no switch | **16.8%** | **0.92** | −33.5% | 17.2% | 3.2× |
+| R0 equal weight 300 | 15.8% | 0.77 | −35.9% | 20.2% | — |
+| SPY | 18.2% | 0.99 | −32.0% | 17.2% | — |
+
+**Decision: failed development.** Confirmation and holdout were not run; both remain unseen.
+
+**Diagnostic** (development only, run after the result, does not change it):
+
+| Tilt | Switch | CAGR | Sharpe above T-bills |
+|---|---|---|---|
+| yes | yes | 8.4% | 0.51 |
+| **yes** | **no** | **17.2%** | **0.94** |
+| no | yes | 8.0% | 0.49 |
+| no | no | 16.8% | 0.92 |
+
+- **The market switch caused the failure.** It went risk-off in four months: January–February 2019 and April–May 2020. Each time this was right after a crash bottom, and it missed the V-shaped rebounds. That cost about 9 points a year in 2017–21.
+- **The tilt is not the problem, but it adds little:** +0.4 points a year and +0.02 Sharpe.
+- **Most of the improvement over equal weight comes from risk weighting** (1 ÷ volatility): Sharpe 0.92 against 0.77.
+- **A design without the switch would have passed this development bar.** But that is known only after looking, so it can be adopted only as a new registered version. Its real test is the unseen 2022–2023 and 2024+ periods.
