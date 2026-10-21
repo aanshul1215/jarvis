@@ -13,7 +13,8 @@ month start using only rows before it, and need two years of history (before tha
 Risk overlay, applied every day to the blended weights:
 1. scale the blend to ``TARGET_VOL`` annual volatility (shrunk correlation, GARCH/EWMA volatilities), times the
    share the blend keeps invested;
-2. caps: gross exposure 1.0 (no leverage), any one asset 30% of capital, crypto 20% in total, shorts 30% in total;
+2. caps: gross exposure 2.0 (round 3, owner decision), any one asset 30% of capital, crypto 20% in total, shorts
+   30% in total;
 3. drawdown control: full size below a 10% drawdown, falling linearly to a quarter of size at 20%, kept at a
    quarter beyond (the owner's 25% limit is also a hard stop in the live Governor).
 """
@@ -25,17 +26,18 @@ from datetime import date
 
 import numpy as np
 
-from .backtest import BAND, apply_band
+from .backtest import apply_band
 from .panel import BORROW_BPS_PER_YEAR, Panel
 from .risk import correlation, portfolio_vol
 
-# Round 2 (owner decision 2026-10-20): up to 1.5x gross exposure (margin), paying MARGIN_RATE on borrowed money.
-TARGET_VOL, GROSS_CAP, ASSET_CAP, CRYPTO_CAP, SHORT_CAP = 0.15, 1.5, 0.30, 0.20, 0.30
-MARGIN_RATE = 0.07  # a year on long exposure above the capital (conservative for a retail margin account)
+# Round 3 (owner decision 2026-10-20): up to 2x gross exposure (margin), paying interest on borrowed money.
+TARGET_VOL, GROSS_CAP, ASSET_CAP, CRYPTO_CAP, SHORT_CAP = 0.15, 2.0, 0.30, 0.20, 0.30
+MARGIN_RATE = 0.07    # a year on long exposure above the capital, when no point-in-time rate is given
+MARGIN_SPREAD = 0.03  # research: margin interest = the 3-month T-bill rate known that day + 3% a year
 DD_START, DD_FLOOR_AT, DD_FLOOR = 0.10, 0.20, 0.25
 SHRINK, HORIZON, MIN_TRAIN_ROWS, RECENT_WINDOW, MIN_REGIME_ROWS = 0.5, 21, 504, 126, 60
 METHODS = ("equal", "recent", "regime", "situational", "ranker_only")
-RANKER = "learning_ranker"  # sleeve name of the ranker in the blend (the last sleeve when present)
+RANKER = "momentum_ranker"  # sleeve name of the ranker in the blend (the last sleeve when present)
 
 
 def month_starts(dates: list[date]) -> list[int]:
@@ -140,12 +142,13 @@ def drawdown_multiplier(drawdown: float) -> float:
 
 def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndarray, vols: np.ndarray,
                   returns: np.ndarray, *, start: int, end: int | None = None, cost_multiplier: float = 1.0,
-                  rebalance_rows: set[int] | None = None) -> dict:
+                  rebalance_rows: set[int] | None = None, margin_rates: np.ndarray | None = None) -> dict:
     """Simulate the whole system day by day (decision at row t, traded at row t + 1's open), including the
     drawdown control, which needs the system's own equity so far.
 
     With ``rebalance_rows`` (round 2: the first row of each week), the portfolio is rebuilt only on those rows; on
     other days positions drift, except that a tighter drawdown cut than the one in force scales them down at once.
+    ``margin_rates`` (T,) is the annual interest on borrowed money known at each row (default: MARGIN_RATE).
     """
     t_total, n = panel.shape
     end = t_total - 2 if end is None else min(end, t_total - 2)
@@ -155,7 +158,6 @@ def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndar
     held = np.zeros(n)
     equity, peak = 1.0, 1.0
     known_equity, known_peak = 1.0, 1.0  # equity through the return that ended at row t's open (known at its close)
-    margin = MARGIN_RATE / 252
     applied_cut = 1.0  # the drawdown multiplier in force since the last rebuild
     out = {"dates": [], "returns": [], "turnover": [], "gross": [], "net": [], "short": [], "drawdown": [], "weights": {}, "targets": {}}
     for t in range(start, end):
@@ -176,11 +178,12 @@ def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndar
             target = held
         tradable = np.isfinite(panel.open[t + 1])
         target = np.where(tradable, target, held)
-        new = apply_band(target, held, BAND)
+        new = apply_band(target, held)
         traded = np.abs(new - held)
         priced = tradable & np.isfinite(panel.open[t + 2])
         move = np.where(priced, panel.open[t + 2] / np.where(priced, panel.open[t + 1], 1.0) - 1, 0.0)
         borrowed = max(0.0, float(np.clip(new, 0, None).sum()) - 1.0)
+        margin = (MARGIN_RATE if margin_rates is None else float(margin_rates[t])) / 252
         r = float(new @ move) - float(traded @ cost) - float(np.clip(-new, 0, None).sum() * borrow) - borrowed * margin
         value = 1 + float(new @ move)
         held = new * (1 + move) / value if value > 0 else np.zeros(n)

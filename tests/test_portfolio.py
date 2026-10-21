@@ -178,20 +178,50 @@ def test_pairs_do_not_reenter_after_a_stop():
     assert entries >= 1 and not later[-30:].any()              # the runaway divergence is not traded again
 
 
-def test_learning_ranker_ignores_the_future():
-    from jarvis.portfolio.ranker import ranker
-    panel = synthetic_panel(700, seed=10)
+def test_momentum_ranker_ignores_the_future_and_keeps_its_rules():
+    from jarvis.portfolio import ranker as rk
+    panel = synthetic_panel(900, seed=10)
     ctx = context(panel)
-    sleeves_now = [sl.trend_xasset(ctx), sl.low_volatility(ctx)]
-    situation = np.zeros((panel.shape[0], len(FEATURES)))
-    full, report = ranker(ctx, sleeves_now, situation)
-    assert report["refits"] >= 1 and np.abs(full[600:]).sum() > 0               # it trained and traded
-    cut = 640
-    short = context(panel.until(cut))
-    part, _ = ranker(short, [sl.trend_xasset(short), sl.low_volatility(short)], situation[:cut + 1])
-    assert np.allclose(full[:cut + 1], part, atol=1e-10)
-    crypto = [panel.index(a) for a in CRYPTO]
-    assert np.all(full[:, crypto] >= 0)
+    full, report = rk.ranker(ctx)
+    assert report["entries"] >= 4 and np.abs(full[600:]).sum() > 0               # it traded
+    cut = 700
+    part, _ = rk.ranker(context(panel.until(cut)))
+    assert np.allclose(full[:cut + 1], part, atol=1e-12)
+    held = full != 0
+    assert held.sum(axis=1).max() <= rk.MAX_HELD and np.all(full >= 0)            # long only, at most 4 names
+    for j, asset in enumerate(panel.assets):                                       # only eligible names, ever
+        if held[:, j].any():
+            assert all(rk.eligible(asset, panel.dates[t]) for t in np.where(held[:, j])[0]), asset
+    tech = [panel.index(a) for a in rk.TECH_CLUSTER]
+    assert held[:, tech].sum(axis=1).max() <= rk.MAX_TECH
+    months = set(rk.month_starts(panel.dates))
+    for t in range(1, panel.shape[0]):
+        new = held[t] & ~held[t - 1]
+        if t not in months:
+            assert not new.any() and not (held[t - 1] & ~held[t]).any()            # trades only at month starts
+            both = held[t] & held[t - 1]
+            if both.sum() >= 2:                                                    # weights fixed at entry
+                ratio = full[t, both] / full[t - 1, both]
+                assert np.allclose(ratio, ratio[0])
+        elif held[t - 1].any():
+            assert new.sum() <= rk.MAX_NEW_PER_MONTH
+
+
+def test_ranker_eligibility_is_point_in_time():
+    from jarvis.portfolio.ranker import eligible
+    assert eligible("XLK", date(2017, 3, 1)) and not eligible("TLT", date(2017, 3, 1))
+    assert not eligible("NVDA", date(2019, 6, 3)) and eligible("NVDA", date(2022, 6, 1))   # top-10 only from end-2021
+    assert not eligible("TSLA", date(2020, 6, 1)) and eligible("TSLA", date(2021, 6, 1))
+    assert not eligible("AAPL", date(2015, 6, 1))                                           # no list before end-2015
+
+
+def test_margin_rate_uses_only_published_tbill_rates():
+    from jarvis.portfolio.study import margin_schedule
+    dates = [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6)]
+    rates = margin_schedule(dates, {"2020-01-02": 1.5, "2020-01-03": 2.0})
+    assert rates[0] == pytest.approx(allocator.MARGIN_RATE)                  # 2 Jan's rate is not known on 2 Jan
+    assert rates[1] == pytest.approx(0.015 + allocator.MARGIN_SPREAD)
+    assert rates[2] == pytest.approx(0.020 + allocator.MARGIN_SPREAD)
 
 
 def test_weekly_rebalance_holds_between_rebuilds_and_margin_is_charged():

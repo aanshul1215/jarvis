@@ -167,3 +167,39 @@ Chosen: `regime` blending.
 3. **Weekly rebalance** on the first session of each week, traded at the next open. Between rebuilds, positions are cut immediately only if the drawdown control tightens.
 4. **Gross exposure up to 1.5×**, with margin interest at 7% a year on long exposure above capital. The paper policy's holdings cap is $15,000 on the $10,000 allocation.
 5. **Methods (trials):** `equal`, `recent`, `regime`, `situational`, and `ranker_only` (the ranker alone through the overlay). Selection and the deflated Sharpe follow the round 1 rule, and the deflated Sharpe counts round 1's 4 trials too.
+
+## Round 2 development result (v1.1.0, run 2026-10-20)
+
+- **Chosen:** `situational`: 14.9% a year, Sharpe 1.21, worst drawdown −15.9%, turnover 26.6× a year; 13.3% a year with doubled costs.
+- **The learning ranker failed:** 2.2% a year on its own. Its predictions carried almost no information (IC +0.017).
+- **Deflated Sharpe probability:** 0.96 over 9 trials.
+- **Diagnostic (development only), why it took less risk than targeted:**
+  - Realised volatility was 12%, against the 15% target.
+  - The 1.5× gross cap bound on 87–93% of weekly rebuilds; the blend needed a median 2.1× to reach the target.
+  - Volatility forecasts were not the cause: the ex-ante volatility of the final weights was 11%.
+  - Turnover was 100% on rebuild days, driven by the learning ranker (83× a year on its own), volatility breakout (42×), news (32×) and cross-asset trend (26×).
+- Confirmation and holdout were **not** run for v1.1.0.
+
+## Round 3 (v1.2.0), registered 2026-10-20 before its first run
+
+Owner decisions 2026-10-20: the revised ranker plan (`RANKER_DESIGN.md`) is approved; 2× leverage.
+
+1. **Momentum ranker** (`portfolio/ranker.py`) replaces the learning ranker and `relative_strength`.
+   - **Validation, before use** (registered at commit 5be2e02 and run once): French 49 industries, 1927–2015. Mean monthly IC +0.068, t = 8.1, positive in all 9 sub-periods. **Passed.**
+   - **Eligible names:** the 17 equity ETFs, plus a single stock only while it was a US top-10 company by market value at the previous year-end (RECALLED list in the code).
+   - **Score:** the average cross-sectional rank of the 3-month, 6-month and 12-1 month returns.
+   - **Decisions:** at each month start.
+     - **Sell** when a holding falls below 9th place, stops being eligible, or its 12-1 return turns negative.
+     - **Buy** from the top 4 (12-1 return positive) up to 4 names: at most 2 new names a month (a full rebuild when nothing is held), and at most 2 names from the big-tech cluster.
+   - **Weights:** 1 / volatility, fixed at entry; then risk-scaled to 10% like every sleeve.
+   - **Never uses** the entry price or unrealised P&L.
+2. **Sleeves blended:** `trend_xasset`, `low_volatility`, `news_sentiment`, `theme_ai_power`, `trend_sma200`, `volatility_breakout`, `earnings_drift`, and `momentum_ranker`.
+3. **Gross exposure up to 2.0×.** The other caps are unchanged.
+4. **Margin interest:** the 3-month T-bill rate known that day plus 3% a year, which is what was payable at the time. A flat 7% throughout is reported as a sensitivity.
+5. **No-trade band:** skip a change smaller than 1% of capital or 20% of the target position, whichever is larger. A full exit is always allowed. The research simulation and the executor use the same rule.
+6. **Deflated Sharpe:** counts at least 25 trials, a floor covering every look at the data so far.
+7. **Methods (trials):** `equal`, `recent`, `regime`, `situational`, and `ranker_only` (the momentum ranker alone, through the overlay). Selection is unchanged: the highest development Sharpe within the 25% drawdown limit.
+8. **Executor:**
+   - It sizes buys against the broker's buying power, so margin is allowed; before, it used the smaller of buying power and cash.
+   - The paper policy's holdings cap becomes $20,000 on the $10,000 allocation.
+9. **Next:** if development chooses a configuration, its confirmation (2022–2023) and then its holdout (2024+) run once each, straight after, with the registered pass rule.

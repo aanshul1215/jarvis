@@ -3,7 +3,8 @@
 Weights decided at row t (after its close) are traded at row t + 1's open and held to row t + 2's open, so the
 return earned for decision t is open[t+2] / open[t+1] - 1. Costs: per-side spread and fee on every change in
 weight (``Panel.cost_bps``), and a borrow fee on short positions. Between trades, weights drift with prices; a
-no-trade band skips changes too small to be worth their cost (the same rule the executor uses).
+no-trade band skips changes too small to be worth their cost (the same rule the executor uses): round 3 skips a
+change smaller than 1% of capital or 20% of the target position, whichever is larger.
 
 The paper desk computes the same weights with the same functions and trades them through the broker; a replay of
 the executor checks that the two paths agree.
@@ -18,18 +19,19 @@ import numpy as np
 
 from .panel import BORROW_BPS_PER_YEAR, Panel
 
-BAND = 0.005  # skip a trade when the weight change is smaller than 0.5% of capital (about $50 on $10,000)
+BAND = 0.01       # skip a trade when the weight change is under 1% of capital (about $100 on $10,000) ...
+BAND_REL = 0.20   # ... or under 20% of the target position (round 3: drift is tolerated, churn is not)
 
 
-def apply_band(target: np.ndarray, current: np.ndarray, band: float = BAND) -> np.ndarray:
+def apply_band(target: np.ndarray, current: np.ndarray, band: float = BAND, relative: float = BAND_REL) -> np.ndarray:
     """Keep the current weight where the change is below the band; always allow closing a position fully."""
     change = np.abs(target - current)
-    keep = (change < band) & (target != 0)
+    keep = (change < np.maximum(band, relative * np.abs(target))) & (target != 0)
     return np.where(keep, current, target)
 
 
 def simulate(panel: Panel, weights: np.ndarray, *, start: int = 0, end: int | None = None,
-             cost_multiplier: float = 1.0, band: float = BAND) -> dict:
+             cost_multiplier: float = 1.0, band: float = BAND, relative: float = BAND_REL) -> dict:
     """Daily returns of trading ``weights`` (T, N) between rows ``start`` and ``end``.
 
     Returns {"dates", "returns", "turnover", "gross", "net", "short"} where dates[k] is the day the return was earned
@@ -46,7 +48,7 @@ def simulate(panel: Panel, weights: np.ndarray, *, start: int = 0, end: int | No
         target = np.nan_to_num(weights[t], nan=0.0)
         tradable = np.isfinite(opens[t + 1])
         target = np.where(tradable, target, held)  # no price to trade at: keep the position as it is
-        new = apply_band(target, held, band)
+        new = apply_band(target, held, band, relative)
         traded = np.abs(new - held)
         priced = tradable & np.isfinite(opens[t + 2])
         move = np.where(priced, opens[t + 2] / np.where(priced, opens[t + 1], 1.0) - 1, 0.0)

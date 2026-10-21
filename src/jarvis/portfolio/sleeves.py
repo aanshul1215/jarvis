@@ -370,11 +370,11 @@ def earnings_drift(ctx: Context) -> np.ndarray:
     return risk_scale(ctx, _inverse_vol(ctx, _hold_machine(entry, np.zeros((t_total, n), dtype=bool), 20)))
 
 
-# Round 2 (v1.1.0): sleeves blended into the portfolio. Dropped after round-1 development (negative or zero
-# Sharpe, 2017-2021): pairs, meanrev_rsi2, breakout_volume, xs_momentum. They are still computed, because the
-# learning ranker uses every sleeve's view of each asset as an input.
+# Sleeves blended into the portfolio. Dropped after round-1 development (negative or zero Sharpe, 2017-2021): pairs,
+# meanrev_rsi2, breakout_volume, xs_momentum. Round 3 (v1.2.0): relative_strength is replaced by the momentum ranker
+# (ranker.py), which the study appends as the last sleeve.
 ACTIVE = ("trend_xasset", "low_volatility", "news_sentiment", "theme_ai_power", "trend_sma200", "volatility_breakout",
-          "relative_strength", "earnings_drift")
+          "earnings_drift")
 
 SLEEVES: dict[str, Callable[[Context], np.ndarray]] = {
     "trend_xasset": trend_xasset, "xs_momentum": xs_momentum, "low_volatility": low_volatility, "pairs": pairs,

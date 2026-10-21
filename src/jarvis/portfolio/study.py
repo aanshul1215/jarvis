@@ -26,7 +26,7 @@ from ..history import UniverseAsset
 from ..macro import load_macro
 from ..sentiment import SentimentIndex
 from ..storage import LocalStorage, _canonical, _hash
-from .allocator import METHODS, RANKER, blend_schedule, run_portfolio
+from .allocator import MARGIN_RATE, MARGIN_SPREAD, METHODS, RANKER, blend_schedule, run_portfolio
 from .ranker import ranker, week_starts
 from .backtest import simulate, stats
 from .panel import Panel, build_panel
@@ -34,7 +34,8 @@ from .risk import vol_forecasts
 from .situation import FEATURES, capex_growth, raw_features, regime, standardise
 from .sleeves import ACTIVE, SLEEVES, Context
 
-VERSION = "1.1.0"  # round 2: learning ranker, weekly rebalance, 4 sleeves dropped, 1.5x gross
+VERSION = "1.2.0"  # round 3: momentum ranker, 2x gross, wider no-trade band, point-in-time margin rate
+MIN_TRIALS = 25    # the deflated Sharpe counts at least this many trials (every look at the data so far)
 PERIODS = {"DEVELOPMENT": (date(2017, 1, 1), date(2021, 12, 31)),
            "CONFIRMATION": (date(2022, 1, 1), date(2023, 12, 31)),
            "HOLDOUT": (date(2024, 1, 1), date(2100, 1, 1))}
@@ -56,10 +57,9 @@ class Book:
         self.raw = raw_features(self.ctx, store)
         self.features = standardise(self.raw)
         self.labels = [regime(row) for row in self.raw]
-        everything = {name: fn(self.ctx) for name, fn in SLEEVES.items()}
-        self.ranker_weights, self.ranker_report = ranker(self.ctx, list(everything.values()), self.features)
+        self.ranker_weights, self.ranker_report = ranker(self.ctx)
         self.sleeve_names = list(ACTIVE) + [RANKER]
-        self.sleeves = [everything[name] for name in ACTIVE] + [self.ranker_weights]
+        self.sleeves = [SLEEVES[name](self.ctx) for name in ACTIVE] + [self.ranker_weights]
         self.rebalance_rows = set(week_starts(p.dates))
         self.sleeve_returns = np.zeros((p.shape[0], len(self.sleeves)))
         for k, w in enumerate(self.sleeves):
@@ -68,11 +68,26 @@ class Book:
                 self.sleeve_returns[p.dates.index(d), k] = r
         rates = {row["observation_date"]: row["value"] for row in load_macro(store, "DTB3")}
         self.tbill = rates
+        self.margin_rates = margin_schedule(p.dates, rates)
 
     def rows(self, period: str) -> tuple[int, int]:
         first, last = PERIODS[period]
         idx = [i for i, d in enumerate(self.panel.dates) if first <= d <= last]
         return (idx[0], idx[-1]) if idx else (0, -1)
+
+
+def margin_schedule(dates: list[date], tbill: dict[str, float]) -> np.ndarray:
+    """Annual margin rate known at each row: the latest 3-month T-bill observation dated before the row's date
+    (FRED publishes a day's rate the next day) plus MARGIN_SPREAD; MARGIN_RATE before any observation."""
+    obs = sorted((date.fromisoformat(k), v) for k, v in tbill.items() if v is not None)
+    out, k, last = np.full(len(dates), MARGIN_RATE), 0, None
+    for i, d in enumerate(dates):
+        while k < len(obs) and obs[k][0] < d:
+            last = obs[k][1]
+            k += 1
+        if last is not None:
+            out[i] = last / 100 + MARGIN_SPREAD
+    return out
 
 
 def slice_stats(result: dict, first: date, last: date) -> dict:
@@ -99,14 +114,14 @@ def benchmarks(book: Book, first_row: int) -> dict[str, dict]:
     basket = np.zeros((t, n))
     eq = [i for i, c in enumerate(p.classes) if c == AssetClass.EQUITY]
     basket[:, eq] = 1 / len(eq)
-    out["equal_weight_universe"] = simulate(p, basket, start=first_row, band=0.02)
+    out["equal_weight_universe"] = simulate(p, basket, start=first_row, band=0.02, relative=0.0)
     mix = np.zeros((t, n))
     mix[:, p.index("SPY")], mix[:, p.index("IEF")] = 0.6, 0.4
-    out["60_40"] = simulate(p, mix, start=first_row, band=0.02)
+    out["60_40"] = simulate(p, mix, start=first_row, band=0.02, relative=0.0)
     return out
 
 
-def deflated_sharpe(returns: np.ndarray, trial_sharpes: list[float]) -> dict:
+def deflated_sharpe(returns: np.ndarray, trial_sharpes: list[float], min_trials: int = 1) -> dict:
     """Probability that the true Sharpe exceeds the best one expected by luck across the trials (Bailey and
     Lopez de Prado 2014). Sharpe ratios here are per day."""
     from scipy import stats as st
@@ -115,7 +130,7 @@ def deflated_sharpe(returns: np.ndarray, trial_sharpes: list[float]) -> dict:
     n_obs = len(r)
     sd = r.std(ddof=1)
     sr = r.mean() / sd if sd > 0 else 0.0
-    n_trials = max(1, len(trial_sharpes))
+    n_trials = max(min_trials, len(trial_sharpes))
     var_trials = float(np.var(trial_sharpes, ddof=1)) if n_trials > 1 else 0.0
     gamma = 0.5772156649
     expected_max = math.sqrt(var_trials) * ((1 - gamma) * st.norm.ppf(1 - 1 / n_trials)
@@ -162,9 +177,9 @@ def run_development(home: Path, book: Book) -> dict:
     for method in METHODS:
         blend = blend_schedule(method, book.sleeve_returns, book.features, book.labels, book.panel.dates)
         run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
-                            rebalance_rows=book.rebalance_rows)
+                            rebalance_rows=book.rebalance_rows, margin_rates=book.margin_rates)
         doubled = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
-                                cost_multiplier=2.0, rebalance_rows=book.rebalance_rows)
+                                cost_multiplier=2.0, rebalance_rows=book.rebalance_rows, margin_rates=book.margin_rates)
         results[method] = {"stats": slice_stats(run, first, last),
                            "stats_double_costs": slice_stats(doubled, first, last),
                            "average_blend": dict(zip(book.sleeve_names, blend[start:end].mean(axis=0).round(3).tolist())),
@@ -176,7 +191,12 @@ def run_development(home: Path, book: Book) -> dict:
     history = [v["stats"].get("sharpe") or 0.0 for r in registry.records() if r["spec"]["split"] == "DEVELOPMENT"
                for v in r.get("methods", {}).values()]
     daily = [s / math.sqrt(252) for s in history + trials]
-    dsr = deflated_sharpe(results[chosen]["_returns"], daily) if chosen else None
+    dsr = deflated_sharpe(results[chosen]["_returns"], daily, MIN_TRIALS) if chosen else None
+    if chosen:  # sensitivity, not used to choose: today's retail margin rate (7%) charged throughout
+        blend = blend_schedule(chosen, book.sleeve_returns, book.features, book.labels, book.panel.dates)
+        flat = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
+                             rebalance_rows=book.rebalance_rows)
+        results[chosen]["stats_margin_7pct"] = slice_stats(flat, first, last)
     bench = {k: slice_stats(v, first, last) for k, v in benchmarks(book, start).items()}
     for v in results.values():
         v.pop("_returns")
@@ -212,9 +232,9 @@ def run_once(home: Path, book: Book, split: str) -> dict:
     start_row = next(i for i, d in enumerate(book.panel.dates) if d >= PERIODS["DEVELOPMENT"][0])
     blend = blend_schedule(chosen, book.sleeve_returns, book.features, book.labels, book.panel.dates)
     run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start_row,
-                        rebalance_rows=book.rebalance_rows)
+                        rebalance_rows=book.rebalance_rows, margin_rates=book.margin_rates)
     doubled = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start_row,
-                            cost_multiplier=2.0, rebalance_rows=book.rebalance_rows)
+                            cost_multiplier=2.0, rebalance_rows=book.rebalance_rows, margin_rates=book.margin_rates)
     result = slice_stats(run, first, last)
     bench = {k: slice_stats(v, first, last) for k, v in benchmarks(book, start_row).items()}
     tbill = _tbill_return(book, first, min(last, book.panel.dates[-1]))

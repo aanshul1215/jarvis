@@ -33,7 +33,7 @@ from ..risk import CLOCK_SKEW, Governor, RiskPolicy
 from ..storage import LocalStorage
 from ..strategies import StrategyRegistry
 from .allocator import SHORT_CAP, blend_schedule, drawdown_multiplier, overlay
-from .backtest import BAND
+from .backtest import BAND, BAND_REL
 from .situation import FEATURES
 
 BUY_LIMIT_MARGIN = 0.002
@@ -132,7 +132,7 @@ class PortfolioDesk:
         values = dict(state.position_values or {})
         shorts_now = -sum(v for v in values.values() if v < 0)
         gross_now = sum(abs(v) for v in values.values())
-        cash_left = min(state.buying_power, state.cash)
+        cash_left = state.buying_power  # margin is allowed (owner: up to 2x); the holdings cap bounds the total
         now = self.clock()
         sells, buys = [], []
         for asset, info in self.universe.items():
@@ -166,7 +166,7 @@ class PortfolioDesk:
             delta = target - current
             closing = target == 0 and current != 0
             reducing = abs(target) < abs(current) and (target == 0 or np.sign(target) == np.sign(current))
-            if abs(delta) < BAND * capital and not closing:
+            if abs(delta) < max(BAND * capital, BAND_REL * abs(target)) and not closing:
                 continue
             if halted and not reducing:
                 report.skipped[asset] = "LOSS_STOP_ACTIVE"
