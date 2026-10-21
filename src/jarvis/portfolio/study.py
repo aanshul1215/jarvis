@@ -26,14 +26,15 @@ from ..history import UniverseAsset
 from ..macro import load_macro
 from ..sentiment import SentimentIndex
 from ..storage import LocalStorage, _canonical, _hash
-from .allocator import METHODS, blend_schedule, run_portfolio
+from .allocator import METHODS, RANKER, blend_schedule, run_portfolio
+from .ranker import ranker, week_starts
 from .backtest import simulate, stats
 from .panel import Panel, build_panel
 from .risk import vol_forecasts
 from .situation import FEATURES, capex_growth, raw_features, regime, standardise
-from .sleeves import SLEEVES, Context
+from .sleeves import ACTIVE, SLEEVES, Context
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # round 2: learning ranker, weekly rebalance, 4 sleeves dropped, 1.5x gross
 PERIODS = {"DEVELOPMENT": (date(2017, 1, 1), date(2021, 12, 31)),
            "CONFIRMATION": (date(2022, 1, 1), date(2023, 12, 31)),
            "HOLDOUT": (date(2024, 1, 1), date(2100, 1, 1))}
@@ -55,8 +56,11 @@ class Book:
         self.raw = raw_features(self.ctx, store)
         self.features = standardise(self.raw)
         self.labels = [regime(row) for row in self.raw]
-        self.sleeve_names = list(SLEEVES)
-        self.sleeves = [SLEEVES[name](self.ctx) for name in self.sleeve_names]
+        everything = {name: fn(self.ctx) for name, fn in SLEEVES.items()}
+        self.ranker_weights, self.ranker_report = ranker(self.ctx, list(everything.values()), self.features)
+        self.sleeve_names = list(ACTIVE) + [RANKER]
+        self.sleeves = [everything[name] for name in ACTIVE] + [self.ranker_weights]
+        self.rebalance_rows = set(week_starts(p.dates))
         self.sleeve_returns = np.zeros((p.shape[0], len(self.sleeves)))
         for k, w in enumerate(self.sleeves):
             sim = simulate(p, w, start=0)
@@ -157,9 +161,10 @@ def run_development(home: Path, book: Book) -> dict:
     results, trials = {}, []
     for method in METHODS:
         blend = blend_schedule(method, book.sleeve_returns, book.features, book.labels, book.panel.dates)
-        run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end)
+        run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
+                            rebalance_rows=book.rebalance_rows)
         doubled = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start, end=end,
-                                cost_multiplier=2.0)
+                                cost_multiplier=2.0, rebalance_rows=book.rebalance_rows)
         results[method] = {"stats": slice_stats(run, first, last),
                            "stats_double_costs": slice_stats(doubled, first, last),
                            "average_blend": dict(zip(book.sleeve_names, blend[start:end].mean(axis=0).round(3).tolist())),
@@ -180,7 +185,8 @@ def run_development(home: Path, book: Book) -> dict:
               "status": "COMPLETED" if chosen else "NO_ELIGIBLE_CONFIGURATION",
               "data_last_date": book.panel.dates[-1].isoformat(),
               "methods": results, "chosen": chosen, "deflated_sharpe": dsr, "benchmarks": bench, "sleeves": sleeves,
-              "regime_share": {r: book.labels[start:end].count(r) / (end - start) for r in set(book.labels[start:end])}}
+              "regime_share": {r: book.labels[start:end].count(r) / (end - start) for r in set(book.labels[start:end])},
+              "ranker": book.ranker_report}
     return registry.append(record)
 
 
@@ -205,9 +211,10 @@ def run_once(home: Path, book: Book, split: str) -> dict:
     registry.append(claim)
     start_row = next(i for i, d in enumerate(book.panel.dates) if d >= PERIODS["DEVELOPMENT"][0])
     blend = blend_schedule(chosen, book.sleeve_returns, book.features, book.labels, book.panel.dates)
-    run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start_row)
+    run = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start_row,
+                        rebalance_rows=book.rebalance_rows)
     doubled = run_portfolio(book.panel, book.sleeves, blend, book.vols, book.returns, start=start_row,
-                            cost_multiplier=2.0)
+                            cost_multiplier=2.0, rebalance_rows=book.rebalance_rows)
     result = slice_stats(run, first, last)
     bench = {k: slice_stats(v, first, last) for k, v in benchmarks(book, start_row).items()}
     tbill = _tbill_return(book, first, min(last, book.panel.dates[-1]))

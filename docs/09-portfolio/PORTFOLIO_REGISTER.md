@@ -129,3 +129,41 @@ None of these was informed by results: no real-data portfolio run had happened.
    - Crypto trades only if enabled.
    - The total-holdings and buying-power caps are checked.
 9. **Daily routine:** the full adjusted price history is re-downloaded, so dividends and splits re-adjust every earlier price consistently.
+
+## Round 1 development result (v1.0.0, registry entry 1, run 2026-10-20)
+
+Chosen: `regime` blending.
+
+| Method | Return / yr | Sharpe | Worst drawdown |
+|---|---|---|---|
+| `regime` (chosen) | 9.9% | 1.18 | −11.9% |
+| `situational` | 10.2% | 1.18 | −12.1% |
+| `equal` | 8.3% | 1.05 | — |
+| `recent` | 9.1% | 1.04 | — |
+| SPY | 18.1% | 1.05 | −32.0% |
+| Equal-weight universe | 19.7% | 1.32 | — |
+| 60/40 | 12.5% | 1.24 | — |
+
+- Deflated Sharpe probability: 0.99, against zero (not against SPY).
+- **Problems found:**
+  - turnover was about 52× a year, which cost roughly 3% a year;
+  - four sleeves had negative or zero Sharpe: pairs −1.33, meanrev_rsi2 −0.41, breakout_volume −0.10, xs_momentum 0.07;
+  - with no leverage, realised volatility was about 8%, against the 15% target.
+- Confirmation and holdout were **not** run for v1.0.0.
+
+## Round 2 (v1.1.0), registered 2026-10-20 before its first run (owner decisions: learning ranker, 1.5× leverage)
+
+1. **Learning ranker** (`portfolio/ranker.py`):
+   - **Inputs**, per asset, every week:
+     - all 12 sleeves' views of the asset;
+     - the asset's own state (1/3/6/12-month returns, 12-1 momentum, forecast volatility, distance from the 200-day average, news sentiment and count, an earnings release in the last week);
+     - the 12 situation features;
+     - the asset's group.
+   - **Target:** the next week's open-to-open return over forecast volatility, minus the cross-sectional mean.
+   - **Model:** gradient-boosted trees (depth 3, learning rate 0.05, 200 iterations, at least 200 samples per leaf, L2 = 1).
+   - **Training:** refitted every 4 weeks on completed weeks only; 104 weeks of history needed first.
+   - **Weights:** long the top fifth, short the bottom fifth (never crypto), score over volatility, risk-scaled to 10%.
+2. **Sleeves blended:** `trend_xasset`, `low_volatility`, `news_sentiment`, `theme_ai_power`, `trend_sma200`, `volatility_breakout`, `relative_strength`, `earnings_drift`, plus `learning_ranker`. Pairs, meanrev_rsi2, breakout_volume and xs_momentum are dropped from the blend after round 1, but the ranker still sees their signals.
+3. **Weekly rebalance** on the first session of each week, traded at the next open. Between rebuilds, positions are cut immediately only if the drawdown control tightens.
+4. **Gross exposure up to 1.5×**, with margin interest at 7% a year on long exposure above capital. The paper policy's holdings cap is $15,000 on the $10,000 allocation.
+5. **Methods (trials):** `equal`, `recent`, `regime`, `situational`, and `ranker_only` (the ranker alone through the overlay). Selection and the deflated Sharpe follow the round 1 rule, and the deflated Sharpe counts round 1's 4 trials too.

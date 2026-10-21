@@ -176,3 +176,44 @@ def test_pairs_do_not_reenter_after_a_stop():
     entries = int(np.sum(in_trade[1:] & ~in_trade[:-1]))
     later = in_trade[340:]
     assert entries >= 1 and not later[-30:].any()              # the runaway divergence is not traded again
+
+
+def test_learning_ranker_ignores_the_future():
+    from jarvis.portfolio.ranker import ranker
+    panel = synthetic_panel(700, seed=10)
+    ctx = context(panel)
+    sleeves_now = [sl.trend_xasset(ctx), sl.low_volatility(ctx)]
+    situation = np.zeros((panel.shape[0], len(FEATURES)))
+    full, report = ranker(ctx, sleeves_now, situation)
+    assert report["refits"] >= 1 and np.abs(full[600:]).sum() > 0               # it trained and traded
+    cut = 640
+    short = context(panel.until(cut))
+    part, _ = ranker(short, [sl.trend_xasset(short), sl.low_volatility(short)], situation[:cut + 1])
+    assert np.allclose(full[:cut + 1], part, atol=1e-10)
+    crypto = [panel.index(a) for a in CRYPTO]
+    assert np.all(full[:, crypto] >= 0)
+
+
+def test_weekly_rebalance_holds_between_rebuilds_and_margin_is_charged():
+    from jarvis.portfolio.ranker import week_starts
+    panel = synthetic_panel(420, seed=11)
+    ctx = context(panel)
+    w = [sl.trend_xasset(ctx)]
+    blend = np.ones((panel.shape[0], 1))
+    rows = set(week_starts(panel.dates))
+    run = allocator.run_portfolio(panel, w, blend, ctx.vols, ctx.returns, start=260, end=400, rebalance_rows=rows)
+    traded_days = [d for d, x in zip(run["dates"], run["turnover"]) if x > 1e-12]
+    decision_days = {panel.dates[t + 1] for t in rows if 260 <= t < 400}
+    assert set(traded_days) <= decision_days | {run["dates"][0]}
+    lev = np.zeros(panel.shape)
+    lev[:, :30] = 0.05                                              # 30 positions of 5%: 1.5x gross, within the caps
+    flat = panel.open.copy()
+    flat[:] = 100.0
+    still = Panel(panel.dates, panel.assets, panel.classes, flat, flat, flat, flat, panel.volume)
+    vols = np.full(panel.shape, 0.01)
+    res = allocator.run_portfolio(still, [lev], np.ones((panel.shape[0], 1)), vols, np.zeros(panel.shape),
+                                  start=260, end=280)
+    daily_after_entry = res["returns"][3:]
+    gross = res["gross"][3:]
+    expected = -np.clip(gross - 1.0, 0, None) * allocator.MARGIN_RATE / 252
+    assert np.allclose(daily_after_entry, expected, atol=1e-12) and gross.max() > 1.0

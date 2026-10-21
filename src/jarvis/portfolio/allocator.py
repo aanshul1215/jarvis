@@ -29,11 +29,13 @@ from .backtest import BAND, apply_band
 from .panel import BORROW_BPS_PER_YEAR, Panel
 from .risk import correlation, portfolio_vol
 
-# No leverage: gross exposure is capped at the capital (the owner policy caps holdings at the allocated capital).
-TARGET_VOL, GROSS_CAP, ASSET_CAP, CRYPTO_CAP, SHORT_CAP = 0.15, 1.0, 0.30, 0.20, 0.30
+# Round 2 (owner decision 2026-10-20): up to 1.5x gross exposure (margin), paying MARGIN_RATE on borrowed money.
+TARGET_VOL, GROSS_CAP, ASSET_CAP, CRYPTO_CAP, SHORT_CAP = 0.15, 1.5, 0.30, 0.20, 0.30
+MARGIN_RATE = 0.07  # a year on long exposure above the capital (conservative for a retail margin account)
 DD_START, DD_FLOOR_AT, DD_FLOOR = 0.10, 0.20, 0.25
 SHRINK, HORIZON, MIN_TRAIN_ROWS, RECENT_WINDOW, MIN_REGIME_ROWS = 0.5, 21, 504, 126, 60
-METHODS = ("equal", "recent", "regime", "situational")
+METHODS = ("equal", "recent", "regime", "situational", "ranker_only")
+RANKER = "learning_ranker"  # sleeve name of the ranker in the blend (the last sleeve when present)
 
 
 def month_starts(dates: list[date]) -> list[int]:
@@ -55,6 +57,10 @@ def blend_schedule(method: str, sleeve_returns: np.ndarray, features: np.ndarray
     t_total, s = sleeve_returns.shape
     out = np.full((t_total, s), 1 / s)
     if method == "equal":
+        return out
+    if method == "ranker_only":  # the ranker runs the whole portfolio; requires it as the last sleeve
+        out[:] = 0.0
+        out[:, -1] = 1.0
         return out
     if method not in METHODS:
         raise ValueError(f"unknown blend method {method}")
@@ -121,16 +127,26 @@ def overlay(blended: np.ndarray, invested: float, t: int, panel: Panel, vols: np
     shorts = -w[w < 0].sum()
     if shorts > SHORT_CAP:
         w[w < 0] *= SHORT_CAP / shorts
-    if drawdown >= DD_START:
-        cut = min(1.0, (drawdown - DD_START) / (DD_FLOOR_AT - DD_START))
-        w *= 1 - cut * (1 - DD_FLOOR)
-    return w
+    return w * drawdown_multiplier(drawdown)
+
+
+def drawdown_multiplier(drawdown: float) -> float:
+    """Full size below DD_START, falling linearly to DD_FLOOR at DD_FLOOR_AT, kept there beyond."""
+    if drawdown < DD_START:
+        return 1.0
+    cut = min(1.0, (drawdown - DD_START) / (DD_FLOOR_AT - DD_START))
+    return 1 - cut * (1 - DD_FLOOR)
 
 
 def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndarray, vols: np.ndarray,
-                  returns: np.ndarray, *, start: int, end: int | None = None, cost_multiplier: float = 1.0) -> dict:
+                  returns: np.ndarray, *, start: int, end: int | None = None, cost_multiplier: float = 1.0,
+                  rebalance_rows: set[int] | None = None) -> dict:
     """Simulate the whole system day by day (decision at row t, traded at row t + 1's open), including the
-    drawdown control, which needs the system's own equity so far."""
+    drawdown control, which needs the system's own equity so far.
+
+    With ``rebalance_rows`` (round 2: the first row of each week), the portfolio is rebuilt only on those rows; on
+    other days positions drift, except that a tighter drawdown cut than the one in force scales them down at once.
+    """
     t_total, n = panel.shape
     end = t_total - 2 if end is None else min(end, t_total - 2)
     stack = np.stack([np.nan_to_num(w) for w in sleeve_weights])  # (S, T, N)
@@ -139,21 +155,33 @@ def run_portfolio(panel: Panel, sleeve_weights: list[np.ndarray], blend: np.ndar
     held = np.zeros(n)
     equity, peak = 1.0, 1.0
     known_equity, known_peak = 1.0, 1.0  # equity through the return that ended at row t's open (known at its close)
+    margin = MARGIN_RATE / 252
+    applied_cut = 1.0  # the drawdown multiplier in force since the last rebuild
     out = {"dates": [], "returns": [], "turnover": [], "gross": [], "net": [], "short": [], "drawdown": [], "weights": {}, "targets": {}}
     for t in range(start, end):
         b = blend[t]
         invested = float(b.sum())
         mix = np.tensordot(b / invested if invested > 0 else b, stack[:, t, :], axes=1)
         # The previous decision's return ends at row t + 1's open, after this decision: use the equity before it.
-        target = overlay(mix, invested, t, panel, vols, returns, 1 - known_equity / known_peak)
+        drawdown = 1 - known_equity / known_peak
         known_equity, known_peak = equity, peak
+        cut = drawdown_multiplier(drawdown)
+        if rebalance_rows is None or t in rebalance_rows or not held.any():
+            target = overlay(mix, invested, t, panel, vols, returns, drawdown)
+            applied_cut = cut
+        elif cut < applied_cut - 1e-9:
+            target = held * (cut / applied_cut)  # de-risk now, do not wait for the weekly rebuild
+            applied_cut = cut
+        else:
+            target = held
         tradable = np.isfinite(panel.open[t + 1])
         target = np.where(tradable, target, held)
         new = apply_band(target, held, BAND)
         traded = np.abs(new - held)
         priced = tradable & np.isfinite(panel.open[t + 2])
         move = np.where(priced, panel.open[t + 2] / np.where(priced, panel.open[t + 1], 1.0) - 1, 0.0)
-        r = float(new @ move) - float(traded @ cost) - float(np.clip(-new, 0, None).sum() * borrow)
+        borrowed = max(0.0, float(np.clip(new, 0, None).sum()) - 1.0)
+        r = float(new @ move) - float(traded @ cost) - float(np.clip(-new, 0, None).sum() * borrow) - borrowed * margin
         value = 1 + float(new @ move)
         held = new * (1 + move) / value if value > 0 else np.zeros(n)
         equity *= 1 + r

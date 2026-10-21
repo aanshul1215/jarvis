@@ -32,7 +32,7 @@ from ..market import stable_id
 from ..risk import CLOCK_SKEW, Governor, RiskPolicy
 from ..storage import LocalStorage
 from ..strategies import StrategyRegistry
-from .allocator import SHORT_CAP, blend_schedule, overlay
+from .allocator import SHORT_CAP, blend_schedule, drawdown_multiplier, overlay
 from .backtest import BAND
 from .situation import FEATURES
 
@@ -50,6 +50,11 @@ class TargetBuilder:
         self.blend = blend_schedule(method, self.book.sleeve_returns, self.book.features, self.book.labels,
                                     self.book.panel.dates)
 
+    def is_rebalance_day(self) -> bool:
+        """Weekly rebalance: the latest stored session is the first of its week (the research rule)."""
+        p = self.book.panel
+        return (p.shape[0] - 1) in self.book.rebalance_rows
+
     def targets(self, drawdown: float) -> tuple[dict[str, float], dict]:
         b, p = self.book, self.book.panel
         t = p.shape[0] - 1
@@ -61,7 +66,7 @@ class TargetBuilder:
         diagnostics = {"decision_row_date": p.dates[t].isoformat(), "method": self.method,
                        "blend": dict(zip(b.sleeve_names, np.round(blend, 4).tolist())), "invested_share": invested,
                        "regime": b.labels[t], "situation": dict(zip(FEATURES, np.round(b.raw[t], 4).tolist())),
-                       "drawdown_used": drawdown}
+                       "drawdown_used": drawdown, "rebalance_day": self.is_rebalance_day()}
         return {a: float(w) for a, w in zip(p.assets, weights) if abs(w) > 1e-6}, diagnostics
 
 
@@ -119,9 +124,9 @@ class PortfolioDesk:
                 cancelled.append(client_id)
         return cancelled
 
-    def plan(self, weights: dict[str, float], state, capital: float) -> CycleReport:
+    def plan(self, weights: dict[str, float], state, capital: float, *, reduce_only: bool = False) -> CycleReport:
         p = self.policy
-        halted = state.daily_pnl <= -p.max_daily_loss or state.drawdown >= p.max_drawdown
+        halted = state.daily_pnl <= -p.max_daily_loss or state.drawdown >= p.max_drawdown or reduce_only
         report = CycleReport(capital, halted)
         equity_open = self.broker.equity_market_open()
         values = dict(state.position_values or {})
@@ -214,7 +219,14 @@ class PortfolioDesk:
             capital, state = self.capital_and_state()
         weights, diagnostics = builder.targets(state.drawdown)
         self._event("PORTFOLIO_TARGET", {"capital": capital, "weights": weights, **diagnostics})
-        report = self.plan(weights, state, capital)
+        rebalance = getattr(builder, "is_rebalance_day", lambda: True)()
+        if not rebalance and drawdown_multiplier(state.drawdown) >= 1.0:
+            summary = {"capital": capital, "halted": False, "orders": 0, "cancelled_open_orders": len(cancelled),
+                       "results": {}, "skipped": {}, "planned": [], "note": "not a rebalance day; holding"}
+            self._event("PORTFOLIO_CYCLE", summary)
+            return {**summary, "diagnostics": diagnostics}
+        # Between weekly rebuilds only risk-reducing orders are allowed (the drawdown control tightening).
+        report = self.plan(weights, state, capital, reduce_only=not rebalance)
         for order in report.planned:
             client_id = stable_id("pf", decision_day, order.asset, order.side, f"{order.quantity:.8f}")
             if client_id in self.store.index.intents:
