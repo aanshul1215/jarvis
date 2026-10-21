@@ -182,3 +182,23 @@ def test_stock_book_ignores_the_future_and_values_a_failure_at_zero():
     one = {t: {j: 1.0} for t in rows[:10]}
     run = B.simulate(dead, one, np.zeros((len(m.dates), len(inst.symbols))), np.zeros(len(m.dates)))
     assert run["data_ended_exits"] == 1 and np.prod(1 + run["returns"]) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_enhanced_index_is_fully_invested_capped_weekly_and_tilted():
+    from jarvis.shortterm import enhanced as X
+    B, m, inst, universe, groups, spy = _book_setup(t_total=460, n=60)
+    rates = np.full(len(m.dates), 0.02)
+    rows = list(range(300, 440))
+    decided, report = X.targets(inst, m, universe, groups, spy, rates, rows, switch=False)
+    trading = {t for t, w in decided.items() if w is not None}
+    assert trading <= X.weekly_rows(m.dates, rows) | {t for t in rows if m.dates[t].month != m.dates[t - 1].month}
+    col_group = {j: groups[s] for j, s in enumerate(m.symbols)}
+    for t in trading:
+        w = decided[t]
+        assert abs(sum(w.values()) - 1) < 1e-6 and max(w.values()) <= X.STOCK_CAP + 1e-9
+        assert sum(v for j, v in w.items() if col_group[j] == "A") <= X.GROUP_CAP + 1e-6
+    flat, _ = X.targets(inst, m, universe, groups, spy, rates, rows, tilt=False, switch=False)
+    t = min(trading)
+    assert decided[t] != flat[t]                                            # the tilt changes the weights
+    run = B.simulate(inst, decided, np.zeros((len(m.dates), len(inst.symbols))), rates, band=X.BAND, band_rel=X.BAND_REL)
+    assert np.all(np.isfinite(run["returns"]))

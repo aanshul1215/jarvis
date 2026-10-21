@@ -193,9 +193,10 @@ def targets(inst: Instruments, m: Market, universe: dict[str, list[str]], groups
     return out, report
 
 
-def simulate(inst: Instruments, decided: dict[int, dict[int, float]], costs: np.ndarray, rates: np.ndarray, *,
-             cost_multiplier: float = 1.0) -> dict:
-    """Exact daily simulation from target weights. ``costs`` (T, N) per side."""
+def simulate(inst: Instruments, decided: dict[int, dict[int, float] | None], costs: np.ndarray, rates: np.ndarray, *,
+             cost_multiplier: float = 1.0, band: float = BAND, band_rel: float = BAND_REL) -> dict:
+    """Exact daily simulation from target weights. ``costs`` (T, N) per side. A row whose target is None trades
+    nothing (positions drift; a stock whose data ends still leaves the book)."""
     rows = sorted(decided)
     n = len(inst.symbols)
     h = np.zeros(n)          # weights after the last open's trades, drifted to the current open
@@ -205,16 +206,17 @@ def simulate(inst: Instruments, decided: dict[int, dict[int, float]], costs: np.
         d = t + 1
         if d + 1 >= len(inst.dates):
             break
-        target = np.zeros(n)
-        for j, w in decided[t].items():
-            target[j] = w
-        target[gone] = 0.0
         new = h.copy()
-        for j in np.where((target > 0) | (h > 0))[0]:
-            if target[j] == 0:
-                new[j] = 0.0
-            elif h[j] == 0 or abs(target[j] - h[j]) > max(BAND, BAND_REL * target[j]):
-                new[j] = target[j]
+        if decided[t] is not None:
+            target = np.zeros(n)
+            for j, w in decided[t].items():
+                target[j] = w
+            target[gone] = 0.0
+            for j in np.where((target > 0) | (h > 0))[0]:
+                if target[j] == 0:
+                    new[j] = 0.0
+                elif h[j] == 0 or abs(target[j] - h[j]) > max(band, band_rel * target[j]):
+                    new[j] = target[j]
         over = new.sum() - 1.0
         if over > 1e-12:  # never borrow: scale down only the purchases
             buys = np.clip(new - h, 0, None)
