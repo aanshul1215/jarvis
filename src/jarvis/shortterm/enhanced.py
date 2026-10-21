@@ -66,8 +66,12 @@ def cap_weights(w: dict[int, float], groups: dict[int, str]) -> dict[int, float]
 
 
 def targets(inst: Instruments, m: Market, universe: dict[str, list[str]], groups: dict[str, str], spy_close: np.ndarray,
-            rates: np.ndarray, rows: list[int], *, tilt: bool = True, switch: bool = True) -> tuple[dict, dict]:
-    """{row: target weights or None (no trade)} and a report."""
+            rates: np.ndarray, rows: list[int], *, tilt: bool = True, switch: bool = True,
+            sleeve: float = 0.0) -> tuple[dict, dict]:
+    """{row: target weights or None (no trade)} and a report. With ``sleeve`` > 0 (study 7) that share of capital is
+    always in the month's defensive choice (bonds/commodities by their own trend, else SHY) and the switch is off."""
+    if sleeve:
+        switch = False
     col = {s: j for j, s in enumerate(m.symbols)}
     members = np.zeros(m.close.shape, dtype=bool)
     for t, d in enumerate(m.dates):
@@ -87,8 +91,8 @@ def targets(inst: Instruments, m: Market, universe: dict[str, list[str]], groups
     spy_200 = pd.Series(spy_close).rolling(200, min_periods=200).mean().to_numpy()
     group_of = {j: groups.get(m.symbols[j], "UNKNOWN") for j in range(len(m.symbols))}
     weekly = weekly_rows(m.dates, rows)
-    out, risk_on = {}, True
-    report = {"decisions": 0, "risk_off_decisions": 0, "names_sum": 0, "max_group_share": 0.0, "max_stock_weight": 0.0}
+    out, risk_on, defensive_now = {}, True, None
+    report = {"sleeve_months": {}, "decisions": 0, "risk_off_decisions": 0, "names_sum": 0, "max_group_share": 0.0, "max_stock_weight": 0.0}
     for t in rows:
         d = m.dates[t]
         month_start = t == rows[0] or d.month != m.dates[t - 1].month
@@ -96,6 +100,9 @@ def targets(inst: Instruments, m: Market, universe: dict[str, list[str]], groups
             down = (np.isfinite(spy_252[t]) and np.isfinite(growth[t]) and spy_252[t] < growth[t]
                     and np.isfinite(spy_200[t]) and spy_close[t] < spy_200[t])
             risk_on = not down
+        if sleeve and (month_start or defensive_now is None):
+            defensive_now = defensive_targets(inst, t, growth)
+            report["sleeve_months"][d.isoformat()] = sorted(inst.symbols[j] for j in defensive_now)
         if (t not in weekly and not month_start) or (not risk_on and not month_start):
             out[t] = None  # no trade today (risk-off holdings are chosen once a month)
             continue
@@ -115,7 +122,13 @@ def targets(inst: Instruments, m: Market, universe: dict[str, list[str]], groups
             score = (np.nan_to_num(percentile_rank(ev[t], mem), nan=0.5) + np.nan_to_num(mom, nan=0.5)) / 2
             base = base * (TILT_LOW + score[names])
         w = cap_weights(dict(zip(names.tolist(), base.tolist())), group_of)
-        out[t] = w
+        if sleeve:
+            combined = {j: v * (1 - sleeve) for j, v in w.items()}
+            for j, v in defensive_now.items():
+                combined[j] = combined.get(j, 0.0) + v * sleeve
+            out[t] = combined
+        else:
+            out[t] = w
         report["names_sum"] += len(w)
         share: dict[str, float] = {}
         for j, v in w.items():

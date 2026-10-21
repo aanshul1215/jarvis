@@ -202,3 +202,18 @@ def test_enhanced_index_is_fully_invested_capped_weekly_and_tilted():
     assert decided[t] != flat[t]                                            # the tilt changes the weights
     run = B.simulate(inst, decided, np.zeros((len(m.dates), len(inst.symbols))), rates, band=X.BAND, band_rel=X.BAND_REL)
     assert np.all(np.isfinite(run["returns"]))
+
+
+def test_enhanced_v2_keeps_a_fifth_in_the_monthly_defensive_choice():
+    from jarvis.shortterm import enhanced as X
+    B, m, inst, universe, groups, spy = _book_setup(t_total=460, n=60)
+    rates = np.full(len(m.dates), 0.02)
+    rows = list(range(300, 440))
+    decided, report = X.targets(inst, m, universe, groups, spy, rates, rows, sleeve=0.2)
+    defensive = {inst.symbols.index(s) for s in B.DEFENSIVE + (B.SAFE,)}
+    for t, w in decided.items():
+        if w is None:
+            continue
+        assert abs(sum(w.values()) - 1) < 1e-6
+        assert abs(sum(v for j, v in w.items() if j in defensive) - 0.2) < 1e-6
+    assert report["sleeve_months"] and report["risk_off_share"] == 0
