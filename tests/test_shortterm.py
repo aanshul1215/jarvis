@@ -122,3 +122,63 @@ def test_intraday_signal_uses_the_morning_and_trades_only_the_last_half_hour():
     assert traded == {} and trades == []
     always, _ = I.strategy_returns(table, "I0", {}, days)
     assert always[days[1]] == pytest.approx(102 / 101 * (1 - I.COST_INDEX) ** 2 - 1)
+
+
+def _book_setup(t_total=420, n=45, seed=21):
+    from jarvis.shortterm import book as B
+    rng = np.random.default_rng(seed)
+    prices = 50 * np.exp(np.cumsum(rng.normal(0.0004, 0.02, (t_total, n)), axis=0))
+    days = [date(2016, 1, 4) + timedelta(days=i) for i in range(t_total)]
+    syms = [f"S{j:02d}" for j in range(n)]
+    last = np.full(n, t_total - 1)
+    m = R.Market(days, syms, prices.copy(), prices.copy(), prices.copy(), last, {}, np.ones((t_total, n)))
+    etf_names = B.DEFENSIVE + (B.SAFE, "SPY")
+    etfs = {s: (100 * np.exp(np.cumsum(rng.normal(0.0002, 0.01, t_total))),) * 2 for s in etf_names}
+    inst = B.combine(m, etfs)
+    universe = {f"{d.year:04d}-{d.month:02d}": syms for d in days}
+    groups = {s: ("A" if j < 25 else f"G{j}") for j, s in enumerate(syms)}
+    return B, m, inst, universe, groups, etfs["SPY"][1]
+
+
+def test_stock_book_caps_names_and_industries_and_never_borrows():
+    B, m, inst, universe, groups, spy = _book_setup()
+    rates = np.full(len(m.dates), 0.02)
+    rows = list(range(300, 400))
+    decided, report = B.targets(inst, m, universe, groups, spy, rates, rows, "A1")  # always in stocks
+    for t, w in decided.items():
+        assert len(w) <= B.MAX_NAMES and sum(w.values()) <= 1 + 1e-9
+        assert sum(1 for j in w if groups[m.symbols[j]] == "A") <= B.GROUP_CAP
+    run = B.simulate(inst, decided, np.full((len(m.dates), len(inst.symbols)), 0.0005), rates)
+    assert len(run["returns"]) > 50 and np.all(np.isfinite(run["returns"]))
+
+
+def test_stock_book_risk_off_holds_only_bonds_commodities_or_shy():
+    B, m, inst, universe, groups, spy = _book_setup()
+    falling_spy = np.linspace(400, 200, len(m.dates))               # 12-month return far below T-bills
+    rates = np.full(len(m.dates), 0.02)
+    decided, report = B.targets(inst, m, universe, groups, falling_spy, rates, list(range(300, 360)), "B1")
+    allowed = {inst.symbols.index(s) for s in B.DEFENSIVE + (B.SAFE,)}
+    assert report["risk_off_share"] == 1.0
+    assert all(set(w) <= allowed and abs(sum(w.values()) - 1) < 1e-9 for w in decided.values())
+
+
+def test_stock_book_ignores_the_future_and_values_a_failure_at_zero():
+    B, m, inst, universe, groups, spy = _book_setup()
+    rates = np.full(len(m.dates), 0.02)
+    rows = list(range(300, 380))
+    full, _ = B.targets(inst, m, universe, groups, spy, rates, rows, "B1")
+    cut = 381
+    m2 = R.Market(m.dates[:cut], m.symbols, m.open[:cut], m.close[:cut], m.raw_close[:cut],
+                  np.minimum(m.last_row, cut - 1), {}, m.volume[:cut])
+    inst2 = B.Instruments(inst.dates[:cut], inst.symbols, inst.is_stock, inst.open[:cut], inst.close[:cut],
+                          np.minimum(inst.last_row, cut - 1), {})
+    part, _ = B.targets(inst2, m2, universe, groups, spy[:cut], rates[:cut], rows, "B1")
+    assert full == part
+    j = next(iter(full[rows[0]]))
+    dead = B.Instruments(inst.dates, inst.symbols, inst.is_stock, inst.open.copy(), inst.close.copy(),
+                         inst.last_row.copy(), {j: rows[0] + 3})
+    dead.open[rows[0] + 4:, j] = np.nan
+    dead.last_row[j] = rows[0] + 3
+    one = {t: {j: 1.0} for t in rows[:10]}
+    run = B.simulate(dead, one, np.zeros((len(m.dates), len(inst.symbols))), np.zeros(len(m.dates)))
+    assert run["data_ended_exits"] == 1 and np.prod(1 + run["returns"]) == pytest.approx(0.0, abs=1e-12)
