@@ -75,3 +75,29 @@ Each month, at the first session, decided after its close and traded at the next
   - These rules were fixed by 1927–2015 evidence and the round 3 ranker, not by tuning on 2016–2026, but the 2016–2026 numbers are not a clean out-of-sample test.
   - The deflated Sharpe counts every development trial logged so far (at least 25).
   - Live paper trading is the next honest test.
+
+## Result (run once, 2026-10-20; data to 2026-10-20)
+
+CAGR / Sharpe above T-bills / worst drawdown:
+
+| | 2017–2021 | 2022–2023 | 2024–2026 | 2017–2026 |
+|---|---|---|---|---|
+| **Core (registered)** | 9.6% / 0.53 / −25.5% | 5.1% / 0.18 / −13.0% | 13.1% / 0.47 / −29.5% | **9.6% / 0.45 / −29.5%** |
+| Core, doubled costs | 9.2% | 4.9% | 12.9% | 9.3% |
+| Variant (a): 11 sector ETFs, top 3 | 12.2% / 0.62 / −33.9% | 8.6% / 0.43 / −11.9% | 27.5% / 1.15 / −16.6% | 15.6% / 0.74 / −33.9% |
+| Variant (b): bond switch | 9.5% | 5.1% | 12.7% | 9.5% |
+| SPY | 18.1% / 0.99 / −32.0% | 1.1% / −0.03 / −26.3% | 20.3% / 0.99 / −19.8% | 15.0% / 0.75 / −32.0% |
+| QQQ | 28.3% | 1.7% | 23.4% | 20.9% / 0.86 / −36.6% |
+| Equal-weight universe (fully invested, monthly) | 19.3% / 1.19 | 4.0% / 0.10 | 20.8% / 1.23 | 16.4% / 0.94 / −28.8% |
+| 60/40 | 12.6% | −1.6% | 12.7% | 9.6% / 0.70 / −22.5% |
+
+- **The trend filter:** 101 of 118 decisions were risk-on, with 8 switches.
+- **The core was cheap to run:** about 5.4× turnover a year; doubled costs cost 0.3% a year.
+- **Deflated Sharpe probability (2017–2026, at least 25 trials):** 0.63.
+
+**Verdict: the registered core failed.** It trailed SPY and the equal-weight universe in every period except 2022–2023.
+
+**Variant (a)** (11 sector ETFs, top 3, keep while in the top 6) roughly matched SPY over 2017–2026 (15.6% vs 15.0%; Sharpe above T-bills 0.74 vs 0.75):
+- it beat SPY in 2022–2023 and 2024–2026;
+- it lagged in 2017–2021.
+- It is the mapping the long-history study recommended, because sectors are what it validated. But it was **not** the registered design. Adopting it now would be a choice made after seeing these results.
