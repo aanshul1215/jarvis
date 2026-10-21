@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
                  "cost-report", "selector-study", "collect", "score-news", "daily", "portfolio-study",
-                 "portfolio-targets", "portfolio-paper", "shortterm-update", "desk"):
+                 "portfolio-targets", "portfolio-paper", "shortterm-update", "desk", "performance"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -454,6 +454,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     elif args.command == "desk":
         return _desk(args)
+    elif args.command == "performance":
+        from .performance import build
+        home = _home(args)
+        print(json.dumps(build(home, home / "reports" / "performance.html"), indent=2))
+        return 0
     elif args.command == "score-news":
         from .sentiment import FinbertScorer, score_archive
         home = _home(args)

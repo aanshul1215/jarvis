@@ -215,3 +215,15 @@ def test_a_partial_first_build_keeps_building_until_nothing_is_skipped(tmp_path)
         assert second["orders"] == 2 and second["diagnostics"]["initial_build"]
         third = d.run_once(NotToday({"SPY": 0.0, "TLT": 0.6}), decision_day="2026-10-23")
         assert third["orders"] == 0                                   # built: now waits for its rebalance day
+
+
+def test_performance_page_renders_both_desks_and_the_benchmark():
+    from datetime import date, datetime, timezone
+    from jarvis.performance import render
+    desks = {"sector": {"equity": 10_120.0, "cash": 700.0, "count": 3, "points": [(date(2026, 10, 20), 10_000.0), (date(2026, 10, 21), 10_120.0)],
+                        "holdings": [("XLK", 3_400.0, 50.0)]},
+             "stockbook": {"equity": 9_950.0, "cash": 20.0, "count": 300, "points": [(date(2026, 10, 20), 10_000.0), (date(2026, 10, 21), 9_950.0)],
+                           "holdings": [("AAPL", 60.0, -1.0)] * 12}}
+    page = render(desks, [(date(2026, 10, 20), 10_000.0), (date(2026, 10, 21), 10_050.0)], datetime(2026, 10, 21, tzinfo=timezone.utc))
+    assert "Sector rotation" in page and "Stock book" in page and "S&amp;P 500" in page
+    assert "+$120.00" in page and "−$50.00" in page and "<svg" in page and "290 more positions" in page
