@@ -75,3 +75,33 @@ def test_universe_for_a_month_uses_only_the_previous_month():
     assert u["2020-02"] == ["A"]                                # January's leader, not February's
     assert D.TICKER.match("AAPL") and not D.TICKER.match("0029900E0")
     assert D.looks_like_fund("SPDR S&P 500 ETF Trust") and not D.looks_like_fund("Apple Inc. Common Stock")
+
+
+def test_event_slots_hold_one_trade_each_and_fade_exit_sells_early():
+    from jarvis.shortterm import events as E
+    prices = np.full((80, 3), 100.0)
+    m = market(prices)
+    m.volume = np.ones((80, 3))
+    rule = {"hold": 10}
+    signals = {t: [0, 1, 2] for t in range(25, 40)}
+    run = E.simulate(m, signals, np.zeros(3), np.zeros(80), rule, slots=2)
+    assert len(run["trades"]) >= 2 and run["average_slots_used"] <= 2      # never more trades open than slots
+    assert np.allclose(run["returns"], 0.0)                                 # flat prices, no costs, no cash rate
+    falling = prices.copy()
+    falling[31:, 0] = 90.0                                                  # closes below the entry-day open
+    path, _, kept = E.trade_path(market(falling), 0, 29, 0.0, 10, fade_level=100.0)
+    assert kept == 2 and path[-1] == pytest.approx(0.9)                     # sold at the next open, then flat
+
+
+def test_event_rule_needs_a_jump_beating_spy_on_heavy_volume():
+    from jarvis.shortterm import events as E
+    prices = np.full((40, 2), 50.0)
+    prices[30:, 0] = 53.0                                                   # +6% on day 30
+    prices[30:, 1] = 53.0
+    m = market(prices)
+    m.volume = np.ones((40, 2))
+    m.volume[30, 0] = 5.0                                                   # only stock 0 trades heavy volume
+    universe = {f"{d.year:04d}-{d.month:02d}": m.symbols for d in m.dates}
+    spy = np.full(40, 400.0)
+    hits = E.events(m, universe, [30], spy, np.ones(40, dtype=bool), E.VARIANTS["E1"], E.volume_ratio(m.volume))
+    assert hits[30] == [0]

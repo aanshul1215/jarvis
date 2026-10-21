@@ -32,6 +32,7 @@ class Market:
     raw_close: np.ndarray
     last_row: np.ndarray  # last row with data per symbol
     failed_after: dict[int, int] = field(default_factory=dict)  # symbol column -> last listed row (known failures)
+    volume: np.ndarray | None = None  # split-adjusted share volume
 
     @classmethod
     def from_frames(cls, adjusted: pd.DataFrame, raw: pd.DataFrame) -> "Market":
@@ -39,10 +40,10 @@ class Market:
             d = df.assign(day=df["timestamp"].dt.tz_convert("America/New_York").dt.date)
             return d.pivot_table(index="day", columns="symbol", values=col, aggfunc="last")
 
-        o, c, rc = wide(adjusted, "open"), wide(adjusted, "close"), wide(raw, "close")
+        o, c, rc, v = wide(adjusted, "open"), wide(adjusted, "close"), wide(raw, "close"), wide(adjusted, "volume")
         days = sorted(set(o.index) | set(rc.index))
         syms = sorted(set(o.columns) | set(rc.columns))
-        o, c, rc = (x.reindex(index=days, columns=syms) for x in (o, c, rc))
+        o, c, rc, v = (x.reindex(index=days, columns=syms) for x in (o, c, rc, v))
         oc = c.to_numpy(dtype=float)
         last = np.array([np.max(np.where(np.isfinite(oc[:, j]))[0]) if np.isfinite(oc[:, j]).any() else -1
                          for j in range(len(syms))])
@@ -51,7 +52,8 @@ class Market:
         for j, s in enumerate(syms):
             if s in until and last[j] >= 0 and days[last[j]] <= until[s]:
                 failed[j] = int(last[j])
-        return cls(days, syms, o.to_numpy(dtype=float), oc, rc.to_numpy(dtype=float), last, failed)
+        return cls(days, syms, o.to_numpy(dtype=float), oc, rc.to_numpy(dtype=float), last, failed,
+                   v.to_numpy(dtype=float))
 
 
 def lagged_return(close: np.ndarray, k: int) -> np.ndarray:
