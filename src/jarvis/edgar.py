@@ -42,6 +42,9 @@ CONCEPTS = {  # stored name -> us-gaap / dei concepts tried in order (companies 
     "equity": ("StockholdersEquity",),
     "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",),
     "shares_outstanding": ("dei:EntityCommonStockSharesOutstanding",),
+    # Capital spending (cash paid for property and equipment): the AI/power build-out signal for the theme layer.
+    # Amazon tags it PaymentsToAcquireProductiveAssets; most others PaymentsToAcquirePropertyPlantAndEquipment.
+    "capex": ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"),
 }
 _ACCEPTED = re.compile(r'Accepted</div>\s*<div class="info">(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})</div>')
 
