@@ -32,7 +32,7 @@ from .backtest import simulate, stats
 from .panel import Panel, build_panel
 from .risk import vol_forecasts
 from .situation import FEATURES, capex_growth, raw_features, regime, standardise
-from .sleeves import ACTIVE, SLEEVES, Context
+from .sleeves import ACTIVE, GROUPS, SLEEVES, Context
 
 VERSION = "1.3.0"  # round 4: 6-month drawdown reference, trend on asset classes only, ranker share 25%
 MIN_TRIALS = 25    # the deflated Sharpe counts at least this many trials (every look at the data so far)
@@ -261,3 +261,83 @@ def _tbill_return(book: Book, first: date, last: date) -> float:
             value *= (1 + rate / 100) ** ((d - previous).days / 365)
         previous = d
     return value - 1
+
+
+# --- Round 5: the trend-filtered momentum core (docs/09-portfolio/ROUND5_DESIGN.md) -------------------------------
+
+CORE_VERSION = "1.4.0"  # round 5: trend-filtered momentum rotation, no leverage / vol target / drawdown brake
+ALL_PERIODS = {"2017-2021": (date(2017, 1, 1), date(2021, 12, 31)), "2022-2023": (date(2022, 1, 1), date(2023, 12, 31)),
+               "2024-2026": (date(2024, 1, 1), date(2100, 1, 1)), "2017-2026": (date(2017, 1, 1), date(2100, 1, 1))}
+
+
+class CoreBook:
+    """What the core needs: the panel, volatility forecasts (for the ranker's eligibility check) and T-bill rates."""
+
+    def __init__(self, store: LocalStorage, universe: list[UniverseAsset]):
+        self.panel = build_panel(store, universe)
+        self.returns = self.panel.returns()
+        self.vols = vol_forecasts(self.panel)
+        self.ctx = Context(self.panel, self.vols, self.returns)
+        self.tbill = {row["observation_date"]: row["value"] for row in load_macro(store, "DTB3")}
+
+
+def excess_sharpe(dates: list[date], returns: np.ndarray, rates_by_date: dict[date, float]) -> float | None:
+    r = np.asarray(returns) - np.array([np.nan_to_num(rates_by_date.get(d, 0.0)) / 252 for d in dates])
+    sd = r.std(ddof=1)
+    return float(r.mean() / sd * math.sqrt(252)) if sd > 0 else None
+
+
+def core_runs(book) -> dict[str, dict]:
+    """Simulations of the registered core, its two reported variants and the benchmarks (decisions from 2017)."""
+    from .core import core_weights, known_rate
+    from .ranker import holdings, month_starts
+
+    p = book.panel
+    rates = known_rate(p.dates, book.tbill)
+    first_row = next(i for i, d in enumerate(p.dates) if d >= date(2017, 1, 1))
+    monthly = set(month_starts(p.dates))
+    runs, reports = {}, {}
+    w, reports["core"] = core_weights(book.ctx, rates)
+    runs["core"] = simulate(p, w, start=first_row, rebalance_rows=monthly)
+    runs["core_double_costs"] = simulate(p, w, start=first_row, rebalance_rows=monthly, cost_multiplier=2.0)
+    sectors, _ = holdings(book.ctx, universe=GROUPS["sector"], enter_top=3, hold_top=6, max_held=3)
+    w2, reports["variant_sectors_top3"] = core_weights(book.ctx, rates, held=sectors, slots=3)
+    runs["variant_sectors_top3"] = simulate(p, w2, start=first_row, rebalance_rows=monthly)
+    w3, reports["variant_bond_switch"] = core_weights(book.ctx, rates, bond_switch=True)
+    runs["variant_bond_switch"] = simulate(p, w3, start=first_row, rebalance_rows=monthly)
+    t, n = p.shape
+    for name, mix in (("SPY", {"SPY": 1.0}), ("QQQ", {"QQQ": 1.0}), ("60_40", {"SPY": 0.6, "IEF": 0.4})):
+        x = np.zeros((t, n))
+        for a, v in mix.items():
+            x[:, p.index(a)] = v
+        runs[name] = simulate(p, x, start=first_row, band=0.0, relative=0.0, rebalance_rows=monthly)
+    eq = [i for i, c in enumerate(p.classes) if c == AssetClass.EQUITY]
+    basket = np.zeros((t, n))
+    basket[:, eq] = 1 / len(eq)
+    runs["equal_weight_universe"] = simulate(p, basket, start=first_row, band=0.0, relative=0.0, rebalance_rows=monthly)
+    return {"runs": runs, "reports": reports, "rates": dict(zip(p.dates, rates)), "weights": w}
+
+
+def run_core_study(home: Path, book) -> dict:
+    """Run the registered core once over every period and log it (spec split ALL_PERIODS)."""
+    registry = PortfolioRegistry(home)
+    out = core_runs(book)
+    table = {}
+    for name, run in out["runs"].items():
+        table[name] = {}
+        for period, (first, last) in ALL_PERIODS.items():
+            s = slice_stats(run, first, last)
+            keep = [i for i, d in enumerate(run["dates"]) if first <= d <= last]
+            s["sharpe_above_tbills"] = excess_sharpe([run["dates"][i] for i in keep], run["returns"][keep], out["rates"])
+            table[name][period] = s
+    history = [v["stats"].get("sharpe") or 0.0 for r in registry.records() if r["spec"]["split"] == "DEVELOPMENT"
+               for v in r.get("methods", {}).values()]
+    trials = history + [table[k]["2017-2021"]["sharpe"] or 0.0 for k in ("core", "variant_sectors_top3", "variant_bond_switch")]
+    full = out["runs"]["core"]
+    keep = [i for i, d in enumerate(full["dates"]) if d >= date(2017, 1, 1)]
+    dsr = deflated_sharpe(full["returns"][keep], [s / math.sqrt(252) for s in trials], MIN_TRIALS)
+    record = {"created_at": iso(utc_now()), "fingerprint": _hash(_canonical({"version": CORE_VERSION, "assets": book.panel.assets}))[:20],
+              "version": CORE_VERSION, "spec": {"split": "ALL_PERIODS", "design": "trend_momentum_core"},
+              "status": "COMPLETED", "data_last_date": book.panel.dates[-1].isoformat(), "results": table,
+              "reports": out["reports"], "deflated_sharpe_2017_2026": dsr}
+    return registry.append(record)

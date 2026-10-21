@@ -84,6 +84,21 @@ def composite(sig: list[np.ndarray], t: int, cols: list[int]) -> np.ndarray:
 
 def ranker(ctx: Context) -> tuple[np.ndarray, dict]:
     """Weights (T, N), risk-scaled, and a small report (decisions, entries, exits, average names held)."""
+    raw, report = entry_weights(ctx)
+    return risk_scale(ctx, raw), report
+
+
+def holdings(ctx: Context, **rules) -> tuple[np.ndarray, dict]:
+    """(T, N) True where the ranker holds a name (used by the round 5 core)."""
+    raw, report = entry_weights(ctx, **rules)
+    return raw != 0, report
+
+
+def entry_weights(ctx: Context, *, universe=None, enter_top: int = ENTER_TOP, hold_top: int = HOLD_TOP,
+                  max_held: int = MAX_HELD, max_new: int = MAX_NEW_PER_MONTH,
+                  max_tech: int = MAX_TECH) -> tuple[np.ndarray, dict]:
+    """Raw weights (1 / volatility, fixed at entry) of the hold-or-sell rule. ``universe`` (asset names) replaces
+    the eligibility rule for variants."""
     p = ctx.panel
     t_total, n = p.shape
     sig = signals(p.close)
@@ -95,7 +110,7 @@ def ranker(ctx: Context) -> tuple[np.ndarray, dict]:
     report = {"decisions": 0, "entries": 0, "exits": 0, "held_rows": 0, "names_held_sum": 0}
     for t in range(t_total):
         if t in decisions:
-            cols = [j for j, a in enumerate(p.assets) if eligible(a, p.dates[t])
+            cols = [j for j, a in enumerate(p.assets) if (eligible(a, p.dates[t]) if universe is None else a in universe)
                     and all(np.isfinite(s[t, j]) for s in sig) and np.isfinite(ctx.vols[t, j]) and ctx.vols[t, j] > 0]
             if len(cols) < MIN_NAMES:
                 report["exits"] += len(held)
@@ -106,16 +121,16 @@ def ranker(ctx: Context) -> tuple[np.ndarray, dict]:
                 order = [cols[i] for i in np.argsort(-score, kind="stable")]
                 rank = {j: k + 1 for k, j in enumerate(order)}
                 for j in list(held):
-                    if rank.get(j, 10 ** 6) > HOLD_TOP or not mom[t, j] > 0:
+                    if rank.get(j, 10 ** 6) > hold_top or not mom[t, j] > 0:
                         del held[j]
                         report["exits"] += 1
                 rebuild, added = not held, 0
-                for j in order[:ENTER_TOP]:
-                    if len(held) >= MAX_HELD or (not rebuild and added >= MAX_NEW_PER_MONTH):
+                for j in order[:enter_top]:
+                    if len(held) >= max_held or (not rebuild and added >= max_new):
                         break
                     if j in held or not mom[t, j] > 0:
                         continue
-                    if j in tech and sum(1 for h in held if h in tech) >= MAX_TECH:
+                    if j in tech and sum(1 for h in held if h in tech) >= max_tech:
                         continue
                     held[j] = 1.0 / ctx.vols[t, j]
                     added += 1
@@ -126,4 +141,4 @@ def ranker(ctx: Context) -> tuple[np.ndarray, dict]:
             report["held_rows"] += 1
             report["names_held_sum"] += len(held)
     report["average_names_held"] = report.pop("names_held_sum") / max(1, report["held_rows"])
-    return risk_scale(ctx, raw), report
+    return raw, report

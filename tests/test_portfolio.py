@@ -302,3 +302,38 @@ def test_live_drawdown_brake_uses_a_rolling_peak():
     for i in range(allocator.DD_WINDOW):
         last = PortfolioDesk.brake_drawdown(desk, 8_400, f"e{i}")
     assert last == 0.0 and len(desk.store.saved["equity"]) == allocator.DD_WINDOW
+
+
+def test_core_is_unlevered_long_only_monthly_and_ignores_the_future():
+    from jarvis.portfolio import core
+    from jarvis.portfolio.ranker import month_starts
+    panel = synthetic_panel(900, seed=14)
+    ctx = context(panel)
+    tbill = {d.isoformat(): 2.0 for d in panel.dates}
+    rates = core.known_rate(panel.dates, tbill)
+    w, report = core.core_weights(ctx, rates)
+    assert report["decisions"] > 10 and np.all(w >= 0) and np.all(w.sum(axis=1) <= 1 + 1e-9)
+    live = w.sum(axis=1) > 0
+    assert np.allclose(w.sum(axis=1)[live], 1.0)                                  # fully invested once started
+    months = set(month_starts(panel.dates))
+    changes = [t for t in range(1, len(w)) if not np.allclose(w[t], w[t - 1])]
+    assert set(changes) <= months                                                 # changes only at month starts
+    off = ~core.trend_on(panel.close, panel.index("SPY"), rates)
+    rows = [t for t in months if t >= core.TREND_LOOKBACK and off[t]]
+    assert all(w[t, panel.index("SHY")] == 1.0 for t in rows)                     # risk-off: all in T-bill proxy
+    cut = 800
+    short = context(panel.until(cut))
+    again, _ = core.core_weights(short, core.known_rate(panel.dates[:cut + 1], tbill))
+    assert np.allclose(w[:cut + 1], again)
+    with pytest.raises(AssertionError):
+        core.check_unlevered(np.array([[0.6, 0.6]]))
+
+
+def test_simulate_monthly_rebalance_trades_only_on_rebalance_rows():
+    panel = synthetic_panel(120, seed=15)
+    w = np.zeros(panel.shape)
+    w[:, [panel.index("SPY"), panel.index("IEF")]] = 0.5
+    rows = {0, 40, 80}
+    sim = simulate(panel, w, start=0, band=0.0, relative=0.0, rebalance_rows=rows)
+    traded = {panel.dates.index(d) - 1 for d, x in zip(sim["dates"], sim["turnover"]) if x > 1e-12}
+    assert traded <= rows and np.allclose(sim["net"], 1.0)

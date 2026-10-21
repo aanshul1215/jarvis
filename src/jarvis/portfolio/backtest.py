@@ -31,11 +31,13 @@ def apply_band(target: np.ndarray, current: np.ndarray, band: float = BAND, rela
 
 
 def simulate(panel: Panel, weights: np.ndarray, *, start: int = 0, end: int | None = None,
-             cost_multiplier: float = 1.0, band: float = BAND, relative: float = BAND_REL) -> dict:
+             cost_multiplier: float = 1.0, band: float = BAND, relative: float = BAND_REL,
+             rebalance_rows: set[int] | None = None) -> dict:
     """Daily returns of trading ``weights`` (T, N) between rows ``start`` and ``end``.
 
     Returns {"dates", "returns", "turnover", "gross", "net", "short"} where dates[k] is the day the return was earned
-    (the holding day, row t + 1) and the exposures are the weights actually held after the band.
+    (the holding day, row t + 1) and the exposures are the weights actually held after the band. With
+    ``rebalance_rows``, trades happen only on those rows (and on the first row); positions drift in between.
     """
     t_total, n = panel.shape
     end = t_total - 2 if end is None else min(end, t_total - 2)
@@ -46,6 +48,8 @@ def simulate(panel: Panel, weights: np.ndarray, *, start: int = 0, end: int | No
     dates, rets, turnover, gross, net, short = [], [], [], [], [], []
     for t in range(start, end):
         target = np.nan_to_num(weights[t], nan=0.0)
+        if rebalance_rows is not None and t not in rebalance_rows and held.any():
+            target = held
         tradable = np.isfinite(opens[t + 1])
         target = np.where(tradable, target, held)  # no price to trade at: keep the position as it is
         new = apply_band(target, held, band, relative)
