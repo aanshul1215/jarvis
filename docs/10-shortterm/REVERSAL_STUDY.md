@@ -63,6 +63,7 @@ For every candidate:
 - turnover and cost drag;
 - share of time invested;
 - the number of exits caused by a stock's data ending.
+
 ## Result (run once, 2026-10-21; registry `research/shortterm_studies.jsonl`, version reversal-1.0.0)
 
 **Development, 2016-02 to 2021-12.**
