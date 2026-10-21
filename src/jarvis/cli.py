@@ -589,7 +589,7 @@ def _desk(args) -> int:
         desk = PortfolioDesk(store, AlpacaPaperBroker(key, secret, enable_orders=True), AlpacaMarketData(key, secret),
                              policy, builder.instruments(), strategy_id=cfg["strategy_id"], fractional=cfg["fractional"],
                              band=cfg["band"], band_rel=cfg["band_rel"], use_brake=False, pause=cfg["pause"],
-                             approved=approved)
+                             approved=approved, quote_retries=cfg["quote_retries"])
         result = desk.run_once(builder, decision_day=_datetime.now(NEW_YORK).date().isoformat())
     print(json.dumps({"desk": args.desk, **result}, indent=2, default=str))
     return 0

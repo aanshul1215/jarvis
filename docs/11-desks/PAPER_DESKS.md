@@ -23,7 +23,7 @@
 
 **Sector desk:** at most $4,000 per order and per asset. Assets: the 12 sector ETFs and SHY.
 
-**Stock desk:** at most $1,500 per order and per asset. Assets: the 9 sleeve ETFs, SHY, and the rule `shortterm_top300` (any stock in the current month's point-in-time top-300 list).
+**Stock desk:** at most $1,500 per order and per asset; spread limit **2%** (owner decision 2026-10-21: the free IEX quotes show spreads far wider than the real market's on many large stocks; buys still carry a limit price). Assets: the 9 sleeve ETFs, SHY, and the rule `shortterm_top300` (any stock in the current month's point-in-time top-300 list).
 
 ## How a cycle works
 

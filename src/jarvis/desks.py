@@ -24,9 +24,9 @@ from .history import UniverseAsset
 
 DESKS = {
     "sector": {"strategy_id": "sector_rotation", "keys": ("ALPACA_SECTOR_KEY_ID", "ALPACA_SECTOR_SECRET_KEY"),
-               "fractional": False, "band": 0.01, "band_rel": 0.20, "pause": 0.4},
+               "fractional": False, "band": 0.01, "band_rel": 0.20, "pause": 0.4, "quote_retries": 2},
     "stockbook": {"strategy_id": "stock_book", "keys": ("ALPACA_STOCKBOOK_KEY_ID", "ALPACA_STOCKBOOK_SECRET_KEY"),
-                  "fractional": True, "band": 0.001, "band_rel": 0.25, "pause": 0.4},
+                  "fractional": True, "band": 0.001, "band_rel": 0.25, "pause": 0.4, "quote_retries": 2},
 }
 
 
@@ -138,7 +138,9 @@ def ensure_desk_home(main_home: Path, desk: str) -> Path:
         else:
             from .shortterm.book import DEFENSIVE, SAFE
 
+            # Owner decision 2026-10-21: 2% spread limit for the stock book, because the free IEX quotes show
+            # spreads far wider than the real market's on many large stocks; buys still carry a limit price.
             base.update({"approved_assets": list(DEFENSIVE) + [SAFE], "approved_asset_rules": ["shortterm_top300"],
-                         "max_order_notional": 1500, "max_asset_notional": 1500})
+                         "max_order_notional": 1500, "max_asset_notional": 1500, "max_spread_bps": 200})
         policy.write_text(json.dumps(base, indent=2))
     return home

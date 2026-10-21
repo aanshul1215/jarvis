@@ -39,6 +39,7 @@ from .situation import FEATURES
 
 BUY_LIMIT_MARGIN = 0.002
 EQUITY_HISTORY = "portfolio-equity-history"  # the desk's equity per decision day, for the drawdown control
+BUILD_COMPLETE = "desk-build-complete"  # written after a new desk's first full pass with nothing skipped
 
 
 class TargetBuilder:
@@ -101,7 +102,7 @@ class PortfolioDesk:
     def __init__(self, store: LocalStorage, broker, data, policy: RiskPolicy, universe: list[UniverseAsset], *,
                  clock=utc_now, strategy_id: str = "portfolio", fractional: bool = False, band: float = BAND,
                  band_rel: float = BAND_REL, use_brake: bool = True, pause: float = 0.0,
-                 approved: set[str] | None = None):
+                 approved: set[str] | None = None, quote_retries: int = 0):
         if not policy.owner_approved or not policy.paper_enabled:
             raise ValueError("owner paper approval required")
         if strategy_id not in policy.approved_strategies:
@@ -110,7 +111,7 @@ class PortfolioDesk:
             raise ValueError("the portfolio desk needs allocated_capital in the owner policy")
         self.store, self.broker, self.data, self.policy, self.clock = store, broker, data, policy, clock
         self.strategy_id, self.fractional, self.band, self.band_rel = strategy_id, fractional, band, band_rel
-        self.use_brake, self.pause = use_brake, pause
+        self.use_brake, self.pause, self.quote_retries = use_brake, pause, quote_retries
         allowed = set(policy.approved_assets) if approved is None else approved
         self.universe = {a.symbol: a for a in universe if a.symbol in allowed}
         self.engine = TradingEngine(store, broker, Governor(policy), StrategyRegistry([]), Mode.PAPER)
@@ -137,6 +138,13 @@ class PortfolioDesk:
         peak = max(e for _, e in history)
         return 1 - capital / peak if peak > 0 else 0.0
 
+    def _built(self) -> bool:
+        try:
+            self.store.load_json(BUILD_COMPLETE)
+            return True
+        except FileNotFoundError:
+            return False
+
     def cancel_own_open_orders(self) -> list[str]:
         """Cancel this desk's unfilled orders from earlier cycles (crypto orders are good-till-cancelled)."""
         cancelled = []
@@ -157,7 +165,6 @@ class PortfolioDesk:
         shorts_now = -sum(v for v in values.values() if v < 0)
         gross_now = sum(abs(v) for v in values.values())
         cash_left = state.buying_power  # margin is allowed (owner: up to 2x); the holdings cap bounds the total
-        now = self.clock()
         sells, buys = [], []
         for asset, info in self.universe.items():
             target_w = weights.get(asset, 0.0)
@@ -174,9 +181,21 @@ class PortfolioDesk:
             except Exception as exc:  # no quote: leave the position as it is
                 report.skipped[asset] = f"NO_QUOTE:{type(exc).__name__}"
                 continue
+            now = self.clock()  # per quote: fetching hundreds of quotes takes minutes
             if now - quote.at > timedelta(seconds=p.max_quote_age_seconds) or quote.at > now + CLOCK_SKEW:
                 report.skipped[asset] = "STALE_OR_FUTURE_QUOTE"
                 continue
+            for _ in range(self.quote_retries):  # free single-exchange quotes widen briefly; look again
+                if quote.spread_bps <= p.max_spread_bps:
+                    break
+                time.sleep(2.0)
+                try:
+                    quote = self.data.latest_quote(asset, info.asset_class)
+                except Exception:
+                    break
+                now = self.clock()
+                if now - quote.at > timedelta(seconds=p.max_quote_age_seconds) or quote.at > now + CLOCK_SKEW:
+                    break
             if quote.spread_bps > p.max_spread_bps:
                 report.skipped[asset] = "WIDE_SPREAD"
                 continue
@@ -253,8 +272,9 @@ class PortfolioDesk:
         diagnostics = {**diagnostics, "all_time_drawdown": state.drawdown}
         self._event("PORTFOLIO_TARGET", {"capital": capital, "weights": weights, **diagnostics})
         rebalance = getattr(builder, "is_rebalance_day", lambda: True)()
-        if not rebalance and not any(abs(q) > 1e-12 for q in state.positions.values()):
-            rebalance = True  # a new (empty) desk builds its current target positions at once
+        building = not self._built()
+        if not rebalance and building:
+            rebalance = True  # a new desk keeps building its target positions until one full pass skips nothing
             diagnostics = {**diagnostics, "initial_build": True}
         if not rebalance and drawdown_multiplier(brake) >= 1.0:
             summary = {"capital": capital, "halted": False, "orders": 0, "cancelled_open_orders": len(cancelled),
@@ -299,6 +319,9 @@ class PortfolioDesk:
                 "status": placed.status, "filled_quantity": placed.filled_quantity,
                 "average_price": placed.average_price})
             report.results[order.asset] = placed.status
+        if building and not report.halted and set(report.skipped.values()) <= {"BELOW_ONE_DOLLAR"}:
+            if getattr(self.store, "durable", True):
+                self.store.publish_json(BUILD_COMPLETE, {"day": decision_day, "orders": len(report.planned)})
         summary = {"capital": capital, "halted": report.halted, "orders": len(report.planned),
                    "cancelled_open_orders": len(cancelled), "results": report.results, "skipped": report.skipped,
                    "planned": [{"asset": o.asset, "side": o.side, "quantity": o.quantity, "kind": o.kind,

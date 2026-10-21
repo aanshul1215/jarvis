@@ -178,3 +178,40 @@ def test_an_empty_desk_builds_at_once_then_holds_until_its_rebalance_day(tmp_pat
         assert first["orders"] == 2 and first["diagnostics"].get("initial_build")
         second = d.run_once(NotToday({"SPY": 0.0, "TLT": 0.6}), decision_day="2026-10-22")
         assert second["orders"] == 0 and second["note"] == "not a rebalance day; holding"
+
+
+def test_quotes_are_checked_against_the_time_each_is_fetched(tmp_path):
+    clock = {"t": utc_now()}
+
+    class SlowQuotes(Quotes):
+        def latest_quote(self, asset, cls):
+            clock["t"] += timedelta(seconds=30)                      # each quote takes 30 seconds to arrive
+            mid = self.prices[asset]
+            return Quote(asset, cls, mid * 0.9999, mid * 1.0001, clock["t"], clock["t"], "test", 1.0)
+
+    with LocalStorage(tmp_path / "d") as store:
+        broker = MockBroker(cash=10_000)
+        d = PortfolioDesk(store, broker, SlowQuotes(), policy(approved_strategies=("stock_book",)), UNIVERSE,
+                          clock=lambda: clock["t"], strategy_id="stock_book", use_brake=False)
+        report = d.plan({"SPY": 0.1, "TLT": 0.1, "GLD": 0.1}, broker.state(), 10_000)
+        assert not report.skipped and len(report.planned) == 3
+
+
+def test_a_partial_first_build_keeps_building_until_nothing_is_skipped(tmp_path):
+    class NotToday(FixedTargets):
+        def is_rebalance_day(self):
+            return False
+
+    with LocalStorage(tmp_path / "d") as store:
+        broker = MockBroker(cash=10_000)
+        quotes = Quotes()
+        d = PortfolioDesk(store, broker, quotes, policy(approved_strategies=("stock_book",)), UNIVERSE,
+                          strategy_id="stock_book", use_brake=False)
+        quotes.spread = 80.0                                          # every quote too wide: nothing can be bought
+        first = d.run_once(NotToday({"SPY": 0.3, "TLT": 0.3}), decision_day="2026-10-21")
+        assert first["orders"] == 0 and first["diagnostics"]["initial_build"]
+        quotes.spread = 2.0
+        second = d.run_once(NotToday({"SPY": 0.3, "TLT": 0.3}), decision_day="2026-10-22")
+        assert second["orders"] == 2 and second["diagnostics"]["initial_build"]
+        third = d.run_once(NotToday({"SPY": 0.0, "TLT": 0.6}), decision_day="2026-10-23")
+        assert third["orders"] == 0                                   # built: now waits for its rebalance day
