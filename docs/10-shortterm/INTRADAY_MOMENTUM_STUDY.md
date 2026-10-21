@@ -56,3 +56,25 @@ For each candidate:
 - CAGR, Sharpe above T-bills, worst drawdown;
 - trades per year, average net per trade, hit rate;
 - the share of days traded.
+
+## Result (run once, 2026-10-21; version intraday-momentum-1.0.0)
+
+**Data:** 7.6 million 30-minute bars across 257 symbols.
+
+**Development, 2016-02 to 2021-12.**
+
+| id | CAGR | Sharpe above T-bills | Worst drawdown | Trades/yr | Avg net per trade | Hit rate | Days traded |
+|---|---|---|---|---|---|---|---|
+| I0 SPY every day | −5.9% | −1.26 | −31.0% | 252 | −2.7 bp | 44% | 100% |
+| I1 SPY, signal | −3.4% | −1.25 | −19.2% | 139 | −3.1 bp | 41% | 55% |
+| I2 QQQ, signal | −1.3% | −0.54 | −16.2% | 143 | −1.5 bp | 47% | 57% |
+| I3 top-50 stocks, own signal | −13.6% | −2.70 | −58.2% | 6,586 | −6.3 bp | 38% | 100% |
+| I4 SPY, volatile days | −1.0% | −0.65 | −13.0% | 71 | −2.8 bp | 42% | 28% |
+| I5 SPY, first and twelfth half-hour agree | +0.6% | −0.11 | −6.9% | 71 | −0.5 bp | 43% | 28% |
+
+**Decision: nothing passed.** No confirmation or holdout was run.
+
+**Reading:**
+- In 2016–2021 the morning's direction did not predict the last half-hour after costs. Every version lost money or roughly broke even, and hit rates were below 50%.
+- Single stocks (I3) were worst: about 6,600 round trips a year at 6 bps each.
+- This matches later critiques that the published effect weakened after its sample period. **No intraday layer is added.**
