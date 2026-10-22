@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Local-first multiasset research and paper-trading desk"
 requires-python = ">=3.11"
 dependencies = [
-  "pyarrow==26.0.0",
+  "pyarrow==24.0.0",  # 2026-10-22: Windows Smart App Control blocks the 25.x/26.x DLLs on the owner's PC; 24.0.0 loads
   "alpaca-py==0.44.0",
   "scikit-learn==1.9.1",
   "joblib==1.6.0",
