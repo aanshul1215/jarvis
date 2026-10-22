@@ -119,3 +119,60 @@ CAGR / Sharpe above T-bills / max drawdown:
 - **The crypto timing may credit overnight coin moves** that a US-hours ETF trade would partly miss.
 
 **Red-team review pending** before any implementation.
+
+## Red-team review (2026-10-22; `JARVIS_TEMP/aggr/redteam/`)
+
+**Findings:**
+
+1. **Timing.** The FRED value for date d is the coin price at about 20:00 ET. Rebuilt on 16:00 ET marks from Alpaca hourly bars (2021+):
+   - 91–100% of the 2021–26 gain survives.
+   - But with the real 10:00 ET routine, the 2022–23 crypto sleeve falls from 12.0% to 2.8%. **D1, D2 and D3 then all fail confirmation** and D0 would stay.
+   - With market-on-close orders (signal at about 15:40 ET), the rules pass again.
+   - **The adoption therefore depends on execution timing.**
+
+2. **The backtest broke the spec's 35% crypto cap** on 32% of days (maximum 61%). With the cap applied, D3's 2018–26 result falls from 31.4% to 28.2%.
+
+3. **Excluding 2017, with realistic timing:**
+
+   | Design | 2018–26 CAGR / Sharpe / DD | 2022–26 CAGR / Sharpe / DD |
+   |---|---|---|
+   | D0 | 15.0% / 0.77 / −31% | 17.1% / 0.89 / −15% |
+   | D1 | 22.5% / 1.09 / −33% | 18.1% / 0.97 / −14% |
+   | D2 | 24.7% / 1.02 / −29% | 20.8% / 0.84 / −22% |
+   | D3 | 31.4% / 0.99 / −38% | 25.1% / 0.81 / −29% |
+
+   **Leverage lowered the Sharpe in every slice after 2017.**
+
+4. **Vol targeting did worse than constant leverage after 2021** at the same average scale. It helped only in March 2020.
+
+5. **Crypto–equity correlation is 0.55–0.59 in stress.** The trend sleeve fails in fast crashes (March 2020 −24%) and works in slow bear markets (2022 −30% against coins at −65%).
+
+6. **Alpaca terms:**
+   - IBIT and ETHA are marginable at 30% maintenance; initial margin is 50%; the margin rate is 6.5% a year (360-day basis).
+   - At 2× the account has no buying power left.
+   - If the broker raised crypto ETFs to 100%, a 3% fall would trigger a call.
+
+7. **Statistics:**
+   - D1's Sharpe is 1.09 ± 0.43 (2018–26).
+   - Shrunk and decayed, it is about 0.45–0.6, so **half Kelly is 0.75–1.3×.**
+   - 2× adds nothing over 1.5× in expected growth.
+
+**Honest expectations** (2-year block bootstrap, 2018–26, realistic timing, central Sharpe 0.6):
+
+| | D1 | D2 | D3 |
+|---|---|---|---|
+| Median CAGR | 13% (10–23%) | 11% (7–25%) | 12% (7–32%) |
+| P(−30% within 2 years) | 16% | 29% | 59% |
+| P(−50% within 2 years) | 0.7% | 1.7% | 11% |
+| Median $/trading day, $20k | $10 ($8–18) | $9 ($6–20) | $10 ($6–25) |
+
+**Red-team recommendation:**
+- **Run D1** (or D2 at no more than 1.5× if the owner chooses). Do not run D3; overriding the registered rule is the owner's decision.
+- **Account:** a dedicated $20k paper account (recreate the third account). Keep the two desks unchanged as the control.
+- **Execution:** crypto ETFs and the scale set by market-on-close orders, with the signal at about 15:40 ET.
+- **Hard stop:** cut gross to 1× or less and crypto to 0 (not merely halt new risk), at −35% (D1) or −40% (D2).
+- **Add:**
+  - a daily read of margin requirements, with a stress buffer;
+  - a weekend crypto-exposure rule;
+  - ETF halt and premium checks;
+  - a shadow ledger for dividends and financing.
