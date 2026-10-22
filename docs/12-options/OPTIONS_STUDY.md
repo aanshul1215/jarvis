@@ -131,3 +131,50 @@ Returns are net per trade at base cost (half of today's measured spread per leg 
 - **Robustness:** a non-binding sensitivity check with that rule relaxed changed no decision.
 - **Details:** deviations and implementation choices are in `JARVIS_TEMP/opt3/deviations.txt` (written before any result).
 - **Kronos:** C2-K is running separately (development forecasts first).
+
+## Red-team corrections (2026-10-22; scripts in `JARVIS_TEMP/opt3/redteam/`)
+
+**Power: the table above is "no evidence either way", not proof of no edge.** It could only have detected very large edges. The smallest edge each test had an 80% chance of detecting:
+- C1: 23% of max loss;
+- C2-sell: 37%;
+- C2-buy: 30% of premium;
+- C3: 66%;
+- C4: about 2% of collateral a month.
+
+Literature-sized edges would need decades of trades at this rate. **The negative verdict rests on the literature, the cost arithmetic and the corrected findings below.**
+
+**The exit usability rule (final-30-minute trade) depended on the outcome.** Legs that end far from the money stop trading late, so trades with large moves were dropped: their standardised move was 1.15, against 0.66 for kept trades. Re-pricing the dropped exits with Black-Scholes at each leg's entry IV (validated on 2,108 usable legs, mean error −0.09% of spot; robust to IV ×0.5–2) gives:
+
+| | Binding run | All entered trades, exits imputed |
+|---|---|---|
+| All straddles | −14.5% (t −2.58) | +4.7% (t 0.66) |
+| C2-buy | −5.9% | +13.9% (t 1.20) |
+| All iron flies | +5.1% | **−23.0% (t −2.95)** |
+| C2-sell | +11.0% | **−27.5% (t −2.28)** |
+| C1 | +1.2% (n 6) | +7.9% (t 1.89, n 18) |
+| C3 vs delta-shares | −$249 (t −1.43) | −$22 (t −0.10) |
+| C4a | +0.29% | +0.23% (t 0.32) |
+
+**Retracted:**
+- "Buying straddles lost significantly" and "calls did worse than shares": both were artefacts of the exit rule.
+- C2-sell's +11%: corrected, it is −27.5%.
+- The sentence "C2–C4 are an upper bound": wrong for C2-sell.
+- The sentence that the relaxed check "changed no decision": it flipped signs.
+
+**Still standing:**
+- **Single-stock IV was an unbiased forecast:** realised minus implied was +0.8 vol points (t 0.34, n 751).
+- **Short iron flies lost significantly.**
+- **Calls only matched shares,** which means more cost and variance for the same bet.
+- **Cash-secured puts earned about the T-bill rate:** beta 0.26, alpha −0.6% a trade (t −1.5).
+- **HAR built on daily ranges misses overnight gaps,** so the C2 ratio was mostly an earnings flag. In the top quintile, 63% of cycles had a gap above 4%.
+
+**Longer GLD/USO proxy** (Black-Scholes at 0.91 × GVZ, 219 GLD cycles):
+- GLD made +4.1% a trade, but gold's drift explains +4.6 points of that.
+- The volatility-premium part was −0.5% at base cost (+2.1% at mid).
+- USO was negative after spreads.
+
+**Decision (Task 1):**
+- **Stop option-trading research for this account.**
+- **Use options only as free information:** a daily log of implied volatility and skew for the top 300.
+- **ORATS ($199) is not justified at the current account size.** If bought later, use it for one pre-registered stock-book test: the 30-day put smirk as a monthly screen to drop the top decile, 2008–2026.
+- **C2-K (Kronos)** will be scored when its forecasts finish, on both the binding and the imputed trade sets. To matter it must beat IV's forecast accuracy (correlation 0.82), not just HAR's (0.73).
