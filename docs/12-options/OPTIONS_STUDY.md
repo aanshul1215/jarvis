@@ -73,6 +73,18 @@
 
 **HAR forecast** (Corsi 2009): realised variance from daily Parkinson ranges, regressed on the previous 1, 5 and 22-day averages with a rolling 500-day fit. It uses only data up to the entry close and forecasts the variance over the holding period.
 
+## C2-K settings (owner approved the download 2026-10-22; fixed here before any Kronos forecast was made)
+
+- **Code:** `shiyu-coder/Kronos` at commit `67b630e`, MIT licence, unmodified.
+- **Weights:** `NeoQuasar/Kronos-small` and `NeoQuasar/Kronos-Tokenizer-base`, MIT, safetensors only. CPU.
+- **Input:** the stock's last 400 daily bars up to and including the entry close, with columns open, high, low, close, volume and amount (volume × the mean of open, high, low and close). Timestamps are the session dates. `max_context` is 512.
+- **Forecast horizon:** the number of trading sessions from entry to exit.
+- **Paths:**
+  - Kronos's `predict` averages its sampled paths, which would understate volatility. So the study draws **20 independent paths**, passing the same series 20 times to `predict_batch` with `sample_count = 1`.
+  - Settings: `T = 1.0`, `top_p = 0.9`, `top_k = 0` (the repository's defaults), and `torch.manual_seed` equal to the entry date as YYYYMMDD.
+- **Forecast volatility:** for each path, the standard deviation of daily log returns of the forecast closes (the first return is measured from the entry close), annualised with √252. The forecast is the **median across the 20 paths**.
+- **Ranking:** IV divided by this forecast, in place of IV divided by the HAR forecast. The rest of the C2 rules are unchanged.
+
 ## Pass rules
 
 - **Development:** a family passes if all three hold:
