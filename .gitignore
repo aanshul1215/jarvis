@@ -43,3 +43,6 @@ agent-out/
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude Code session worktrees (local only)
+.claude/worktrees/
