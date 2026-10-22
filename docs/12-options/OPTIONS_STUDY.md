@@ -104,3 +104,30 @@
 - **Holdout (once):** the mean net return is positive at base costs and the sign versus the benchmark is unchanged.
 - **C2-K:** adopted only if it beats C2 with HAR in **both** periods.
 - **Not part of this study:** anything that passes still needs a separate pre-registered design (sizing, limits, execution) and paper trading before any real money. Families that fail are reported and not tuned.
+
+## Result: development, C1–C4 (run once 2026-10-22; entries 2024-02 to 2025-06, 17 cycles). All seven trials FAILED; holdout not run
+
+Returns are net per trade at base cost (half of today's measured spread per leg each way). t-statistics are clustered by month.
+
+| Trial | Trades | Mean (base / 2× / zero cost) | t | Win | Versus benchmark |
+|---|---|---|---|---|---|
+| C1a GLD/USO put spread | 6 (of 34 planned) | +1.2% / −1.6% / +4.1% of max loss | 0.14 | 67% | +0.8% over T-bills, t 0.10 |
+| C1b (IV > HAR) | identical to C1a: HAR from daily ranges was always below IV | | | | |
+| C2-sell iron fly, top 20% IV/HAR | 33 | +11.0% / +2.8% / +20.6% of max loss | 0.86 | 52% | +3.7% over C2-sell-all, t 0.26 |
+| C2-buy straddle, bottom 20% | 76 | −5.9% / −9.3% / −2.3% of premium | −0.56 | 37% | +6.0% over C2-buy-all (−14.5%, t −2.58), t 0.92 |
+| C3 calls after E1 events | 45 | +13.1% / +9.5% / +16.9% of premium (median −33%) | 0.56 | 36% | −$249 per trade against delta-equivalent shares, t −1.43 |
+| C4a cash-secured 25-delta puts | 146 | +0.29% / +0.13% / +0.46% of collateral | 0.47 | 79% | risk-adjusted excess +0.03%, t 0.06 |
+| C4b (above the 200-day average) | 94 | +0.43% / +0.28% / +0.59% | 0.60 | 80% | +0.09%, t 0.18 |
+
+**Reading:**
+- **No strategy reached t ≥ 2, and none beat its benchmark.**
+- **Implied volatility was the better forecast:** it correlated 0.82 with realised volatility, against 0.73 for HAR.
+- **Buying straddles lost significantly** across all eligible names.
+- **Calls after jumps did worse than the equivalent shares.**
+- **Cash-secured puts matched owning the stock** risk-adjusted, with no edge.
+
+**Caveats:**
+- **Data:** trade prints only; many legs were unusable under the final-30-minute rule; only 17 months; universe and costs taken from today (an upper bound).
+- **Robustness:** a non-binding sensitivity check with that rule relaxed changed no decision.
+- **Details:** deviations and implementation choices are in `JARVIS_TEMP/opt3/deviations.txt` (written before any result).
+- **Kronos:** C2-K is running separately (development forecasts first).
