@@ -85,6 +85,16 @@
 - **Forecast volatility:** for each path, the standard deviation of daily log returns of the forecast closes (the first return is measured from the entry close), annualised with √252. The forecast is the **median across the 20 paths**.
 - **Ranking:** IV divided by this forecast, in place of IV divided by the HAR forecast. The rest of the C2 rules are unchanged.
 
+**Amendment (2026-10-22, for computing time; made before any study forecast).**
+- **Why:** on this CPU-only PC the settings above take about 210 s per forecast. Timing was measured on SPY, QQQ, IWM and GLD, none of which is in the C2 universe.
+- **Settings changed:**
+  - **history:** the last **256** daily bars instead of 400;
+  - **paths:** **10** independent paths instead of 20;
+  - **batching:** 4 stocks per batch, ordered alphabetically. The seed (the entry date as YYYYMMDD) is set once per batch.
+- **Input bars:** split- and dividend-adjusted daily bars (`shortterm/daily_adjusted.parquet`). Raw bars would show false jumps at splits.
+- **Coverage:** a stock with fewer than 256 bars at entry gets no Kronos forecast and is not ranked in C2-K.
+- **Order:** forecasts are computed first for the **development** cycles (entries 2024-07 to 2025-06). Holdout forecasts are computed only if C2-K beats C2 with HAR in development, as the pass rule requires.
+
 ## Pass rules
 
 - **Development:** a family passes if all three hold:
