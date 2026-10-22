@@ -46,3 +46,13 @@ Each desk has its own journal, so reconciliation sees only its own account. The 
 **Read-only commands:**
 - `desk --desk <name>` without `--enable-orders` previews the targets;
 - `desk --desk <name> --check` reports the account's equity and positions. It never prints keys.
+
+## Manual trades in a desk account
+
+**Don't trade a desk's account by hand.** Each desk's journal must explain every position. A manual order makes the next cycle stop with "unknown or mismatched broker position" (SAFE), and the paper results stop matching the strategy.
+
+**If a manual trade happens:**
+1. Record it in that desk's journal as a `POSITION_ADJUSTMENT` with the signed quantity and the reason `OWNER_MANUAL_SALE` or `OWNER_MANUAL_BUY`.
+2. To return to the strategy's targets at once, remove `config/desk-build-complete.json` so the next cycle rebuilds.
+
+**First case** (2026-10-21): the owner sold 5 SMH from the sector account by hand. It was recorded on 2026-10-22, and SMH was bought back (6 shares) the same morning.
