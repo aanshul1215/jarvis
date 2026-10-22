@@ -88,3 +88,34 @@
   - the live drawdown against the backtest's simulated 95th percentile;
   - hit rate against binomial bounds.
 - **No retuning on weekly results.** Changes go through a new registered study.
+
+## Result (run once 2026-10-22; `JARVIS_TEMP/aggr/`; deviations written before results)
+
+CAGR / Sharpe above T-bills / max drawdown:
+
+| Design | Dev 2017–21 | Conf 2022–23 | Holdout 2024–26/10 | Full 2017–26 |
+|---|---|---|---|---|
+| D0 (current desks) | 14.2% / 0.81 / −31.1% | 7.0% / 0.31 / −10.8% | 24.6% / 1.23 / −15.4% | 15.6% / 0.84 / −31.1% |
+| D1 (+25% crypto trend) | 54.7% / 1.97 / −32.6% | 8.7% / 0.46 / −12.5% | 27.1% / 1.41 / −15.4% | 36.1% / 1.58 / −32.6% |
+| D2 (25% vol target, ≤1.5×) | 57.1% / 1.99 / −28.6% | 9.5% / 0.39 / −19.2% | 33.2% / 1.28 / −23.2% | 39.2% / 1.51 / −28.6% |
+| D3 (35% vol target, ≤2×) | 82.1% / 1.98 / −38.0% | 9.6% / 0.35 / −25.7% | 42.6% / 1.26 / −30.6% | 53.1% / 1.50 / −38.0% |
+
+**Pass rules:** all four designs pass in every period, so **D3 is adopted by the registered rule.**
+
+**Distributions:**
+- Months at +15% or more (full period): D3 14.5%, D2 11.1%, D1 6.0%, D0 0.
+- Months at −15% or worse: none.
+- D3's median month is +2.0%.
+- **D3 bootstrap (117 twelve-month windows):**
+  - P(average ≥ +15%/month) = 1.7%: two windows, both starting in 2017.
+  - P(daily-path drawdown ≤ −30%) = 19.7%.
+  - Median 12-month return +39%; 5th percentile −13%.
+
+**Caveats found by the study itself:**
+- **2017 dominates development.** In 2017 alone D1 made +220% and D3 +445%. Over 2018–21: D0 12.5%, D1 28.7%, D3 38.1%.
+- **Leverage lowered the Sharpe after 2021:** in confirmation D3 0.35 vs D1 0.46; in holdout 1.26 vs 1.41.
+- **D3's confirmation edge over D1 is under 1 point of CAGR.** With one extra session of lag it falls to 7.92% vs 7.89%.
+- **D3 sat at the 2× cap 93% of the time,** so it is effectively "D1 at about 2×".
+- **The crypto timing may credit overnight coin moves** that a US-hours ETF trade would partly miss.
+
+**Red-team review pending** before any implementation.
