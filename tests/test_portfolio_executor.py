@@ -227,3 +227,22 @@ def test_performance_page_renders_both_desks_and_the_benchmark():
     page = render(desks, [(date(2026, 10, 20), 10_000.0), (date(2026, 10, 21), 10_050.0)], datetime(2026, 10, 21, tzinfo=timezone.utc))
     assert "Sector rotation" in page and "Stock book" in page and "S&amp;P 500" in page
     assert "+$120.00" in page and "−$50.00" in page and "<svg" in page and "290 more positions" in page
+
+
+def test_desk_status_summarises_each_desk_from_its_own_journal(tmp_path):
+    import json
+    from jarvis import desks
+    main = tmp_path / "main"
+    (main / "config").mkdir(parents=True)
+    (main / "config" / "owner-policy.json").write_text(json.dumps(
+        {"max_daily_loss": 300, "max_drawdown": 0.25, "max_spread_bps": 50, "max_quote_age_seconds": 60}))
+    home = desks.ensure_desk_home(main, "sector")
+    with LocalStorage(home) as store:
+        PortfolioDesk(store, MockBroker(cash=10_000), Quotes(), policy(approved_strategies=("sector_rotation",)),
+                      UNIVERSE, strategy_id="sector_rotation", use_brake=False).run_once(
+            FixedTargets({"SPY": 0.2, "TLT": 0.1}), decision_day="2026-10-21")
+    status = desks.desk_status(main)
+    assert status["stockbook"] == {"status": "NOT_STARTED"}
+    sector = status["sector"]
+    assert sector["status"] == "RUNNING" and sector["orders_last_cycle"] == 2 and sector["cycles"] == 1
+    assert sector["order_updates"] == {} and sector["policy"] == "owner-2026-10-21-sector" and sector["build_complete"]

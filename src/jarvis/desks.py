@@ -39,6 +39,21 @@ def desk_keys(desk: str) -> tuple[str | None, str | None]:
     return os.environ.get(key_name), os.environ.get(secret_name)
 
 
+def desk_options(desk: str) -> dict:
+    """The PortfolioDesk settings the desk trades with (no drawdown brake by design; the Governor's stops remain)."""
+    cfg = DESKS[desk]
+    return {"strategy_id": cfg["strategy_id"], "fractional": cfg["fractional"], "band": cfg["band"],
+            "band_rel": cfg["band_rel"], "use_brake": False, "pause": cfg["pause"],
+            "quote_retries": cfg["quote_retries"]}
+
+
+def desk_approved(policy, builder) -> set[str] | None:
+    """The tradable list when the owner approved a rule (the month's top-300 stocks) as well as fixed assets."""
+    if "shortterm_top300" in policy.approved_asset_rules and hasattr(builder, "approved"):
+        return set(policy.approved_assets) | builder.approved()
+    return None
+
+
 class SectorBuilder:
     method = "sector-rotation-1.5.0"
 
@@ -115,6 +130,37 @@ class StockBookBuilder:
                          "rebalance_day": self.is_rebalance_day(), "names": len(weights),
                          "sleeve": self.report.get("sleeve_months"),
                          "universe_month_missing": self.missing_month}
+
+
+def desk_status(main_home: Path) -> dict:
+    """Read-only summary of each desk from its own journal (no broker call): the latest cycle, why orders were
+    skipped, whether the build is complete and which owner policy is in force."""
+    from collections import Counter
+
+    from .storage import LocalStorage
+
+    out = {}
+    for desk in DESKS:
+        home = desk_home(main_home, desk)
+        if not (home / "journal" / "operational.jsonl").exists():
+            out[desk] = {"status": "NOT_STARTED"}
+            continue
+        with LocalStorage(home, writer=False) as store:
+            events = [row["event"] for row in store.read_events()]
+        cycles = [e for e in events if e["event_type"] == "PORTFOLIO_CYCLE"]
+        targets = [e for e in events if e["event_type"] == "PORTFOLIO_TARGET"]
+        last = cycles[-1]["payload"] if cycles else {}
+        statuses = Counter(e["payload"].get("status") for e in events if e["event_type"] == "ORDER_UPDATE")
+        policy = json.loads((home / "config" / "owner-policy.json").read_text())
+        out[desk] = {"status": "HALTED" if last.get("halted") else ("RUNNING" if cycles else "NO_CYCLE_YET"),
+                     "last_cycle_at": cycles[-1]["at"] if cycles else None, "cycles": len(cycles),
+                     "capital": last.get("capital"), "orders_last_cycle": last.get("orders"),
+                     "note": last.get("note"), "skipped_last_cycle": dict(Counter(last.get("skipped", {}).values())),
+                     "decision_row_date": targets[-1]["payload"].get("decision_row_date") if targets else None,
+                     "target_names": len(targets[-1]["payload"].get("weights", {})) if targets else 0,
+                     "order_updates": dict(statuses), "build_complete": (home / "config" / "desk-build-complete.json").exists(),
+                     "policy": policy.get("version"), "allocated_capital": policy.get("allocated_capital")}
+    return out
 
 
 def ensure_desk_home(main_home: Path, desk: str) -> Path:

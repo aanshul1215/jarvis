@@ -98,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
                  "cost-report", "selector-study", "collect", "score-news", "daily", "portfolio-study",
-                 "portfolio-targets", "portfolio-paper", "shortterm-update", "desk", "performance"):
+                 "portfolio-targets", "portfolio-paper", "shortterm-update", "desk", "performance", "golden",
+                 "desk-status"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -141,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--universe", required=True, help="universe JSON (ETF data for the sector desk)")
             command.add_argument("--check", action="store_true", help="connect to the desk's paper account and report it")
             command.add_argument("--enable-orders", action="store_true", help="required to place paper orders")
+        if name == "golden":
+            command.add_argument("--desk", choices=("sector", "stockbook"), help="the desk to record (or to check)")
+            command.add_argument("--universe", help="universe JSON (needed to record the sector desk)")
+            command.add_argument("--record", action="store_true",
+                                 help="record today's decision (market hours; read-only on the desk's paper account)")
         if name == "daily":
             command.add_argument("--universe", required=True, help="universe JSON")
             command.add_argument("--enable-orders", action="store_true",
@@ -454,6 +460,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     elif args.command == "desk":
         return _desk(args)
+    elif args.command == "golden":
+        return _golden(args)
+    elif args.command == "desk-status":
+        from .desks import desk_status
+        print(json.dumps(desk_status(_home(args)), indent=2, default=str))
     elif args.command == "performance":
         from .performance import build
         home = _home(args)
@@ -557,7 +568,8 @@ def _desk(args) -> int:
     from datetime import datetime as _datetime
 
     from .broker import AlpacaPaperBroker
-    from .desks import DESKS, SectorBuilder, StockBookBuilder, desk_keys, ensure_desk_home
+    from .desks import (DESKS, SectorBuilder, StockBookBuilder, desk_approved, desk_keys, desk_options,
+                        ensure_desk_home)
     from .market_data import AlpacaMarketData
     from .portfolio.executor import PortfolioDesk
     from .timeframes import NEW_YORK
@@ -587,14 +599,35 @@ def _desk(args) -> int:
     if not key or not secret:
         print(json.dumps({"desk": args.desk, "paper_orders": "DISABLED", "reason": "desk paper credentials missing"}))
         return 2
-    approved = None
-    if "shortterm_top300" in policy.approved_asset_rules and hasattr(builder, "approved"):
-        approved = set(policy.approved_assets) | builder.approved()
     with LocalStorage(home) as store:
         desk = PortfolioDesk(store, AlpacaPaperBroker(key, secret, enable_orders=True), AlpacaMarketData(key, secret),
-                             policy, builder.instruments(), strategy_id=cfg["strategy_id"], fractional=cfg["fractional"],
-                             band=cfg["band"], band_rel=cfg["band_rel"], use_brake=False, pause=cfg["pause"],
-                             approved=approved, quote_retries=cfg["quote_retries"])
+                             policy, builder.instruments(), approved=desk_approved(policy, builder),
+                             **desk_options(args.desk))
         result = desk.run_once(builder, decision_day=_datetime.now(NEW_YORK).date().isoformat())
     print(json.dumps({"desk": args.desk, **result}, indent=2, default=str))
+    return 0
+
+
+def _golden(args) -> int:
+    """Golden days: replay every recorded desk decision (default), or record today's (``--record``)."""
+    from . import golden
+    from .desks import desk_keys
+
+    main = _home(args)
+    if not args.record:
+        results = golden.check(main, args.desk)
+        print(json.dumps({"recordings": len(results), "results": results}, indent=2))
+        return 1 if any(r["status"] != "PASS" for r in results) else 0
+    if not args.desk or (args.desk == "sector" and not args.universe):
+        print(json.dumps({"result": "BLOCKED", "reason": "--record needs --desk (and --universe for the sector desk)"}))
+        return 2
+    key, secret = desk_keys(args.desk)
+    if not key or not secret:
+        print(json.dumps({"desk": args.desk, "result": "BLOCKED", "reason": "desk paper credentials missing"}))
+        return 2
+    folder = golden.record(main, args.desk, Path(args.universe) if args.universe else None,
+                           AlpacaPaperBroker(key, secret), AlpacaMarketData(key, secret))  # read-only: no orders
+    expected = json.loads((folder / "expected.json").read_text())
+    print(json.dumps({"desk": args.desk, "recorded": str(folder), "weights": len(expected["weights"]),
+                      "planned_orders": len(expected["planned"]), "skipped": len(expected["skipped"])}, indent=2))
     return 0

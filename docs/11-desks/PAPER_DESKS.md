@@ -56,3 +56,32 @@ Each desk has its own journal, so reconciliation sees only its own account. The 
 2. To return to the strategy's targets at once, remove `config/desk-build-complete.json` so the next cycle rebuilds.
 
 **First case** (2026-10-21): the owner sold 5 SMH from the sector account by hand. It was recorded on 2026-10-22, and SMH was bought back (6 shares) the same morning.
+
+## Golden days and operating skills (2026-10-22)
+
+**Golden days** (`src/jarvis/golden.py`) are regression tests built from real desk decisions.
+
+`jarvis golden --record --desk <desk> --universe <universe.json>` runs during market hours, read-only on the desk's paper account. It writes `JARVIS_HOME/golden/<desk>/<day>/`, containing:
+- every stored bar and macro table the target builder read;
+- the stock book's input files;
+- the desk's policy, capital baseline and high-water mark;
+- the broker state;
+- every quote and shortable answer the planner received;
+- the resulting target weights and the full-rebalance plan.
+
+Each recording is replayed once as soon as it is written. If it doesn't reproduce itself, the folder is renamed `<day>.failed`.
+
+`jarvis golden` replays every recording with the current code and settings. It fails on any difference: a code change that would make a desk trade differently is caught before it reaches the desk. `tests/test_golden_days.py` does the same when `JARVIS_HOME` is set. If a change is intended, retire the recording by renaming it `<day>.retired`, then record a new one.
+
+Recordings contain exchange and FRED data, so they stay local and never go into the repository.
+
+- **First recordings (2026-10-22, about 15:30 ET):**
+  - sector: 3 target ETFs, already held, so no orders;
+  - stock book: 303 targets, 9 orders, 101 skipped.
+
+**`jarvis desk-status`** gives a read-only summary of each desk from its own journal: the last cycle, skip reasons, fills, build state and policy version.
+
+**Claude Code skills** (`.claude/skills/`) cover operations and research only. They never place orders.
+- `jarvis-status`: desks against SPY, today's run, and anything that needs the owner.
+- `jarvis-preflight`: tests, golden days, data freshness, the scheduler, credentials (names only), the pyarrow pin and repository hygiene.
+- `jarvis-study`: the pre-registered study protocol, with a template and a red-team checklist.
