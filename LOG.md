@@ -152,3 +152,12 @@ Append dated entries with branch, commit, commands actually run, evidence, failu
      - the split boundaries are now in New York time;
      - duplicate strategy ids are now rejected.
 - Synthetic check: on a random-walk market every stage fails and equal weight is kept. Real-data run: BLOCKED on the Alpaca back-fill.
+
+## 2026-10-22 — Short-horizon data: adjusted-price cleaning, DOW download gap, XLRE
+
+- Check (`data.adjustment_flags`, `jarvis shortterm-check`): flags symbol-days where the adjusted and raw close-to-close returns differ by more than 15% and the raw ratio is not a split ratio (±3%). Research `daily_*`: 155 flagged days (125 symbols). Live `live_daily_*`: 3. Full list in `docs/10-shortterm/adjustment_flags_2026-10-22.csv`.
+- Only 13 of them are vendor errors: the adjusted move is the larger one, e.g. NVS −82% against −12% raw, where the Alcon spin-off was adjusted as a 1:5 reverse split. The other 142 are real splits adjusted correctly (CMG 50:1; AAPL 4:1 on a +3.4% day), where the raw return would be wrong.
+- Rule (`data.clean_adjusted`, applied by `Market.from_frames` for research and the live desk): on those 13 days the vendor's factor change is undone, so the day's adjusted return equals the raw one. Limits and residual issues (duplicate ticker histories, zero-volume filler bars) are recorded in `docs/10-shortterm/DATA_CLEANING.md`.
+- DOW: the data API silently omitted it from a 100-symbol request (reproduced). `fetch_bars` now re-requests symbols that came back empty. XLRE was never in the store universe (VNQ is used); it was back-filled once.
+- The live stock book's targets for the 2026-10-19 decision are unchanged by cleaning (no vendor error in the live window). No orders were placed or changed.
+- Tests: 3 new in `tests/test_shortterm.py`; full suite in `EXECUTION.md`.

@@ -15,7 +15,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from .data import KNOWN_FAILURES
+from .data import KNOWN_FAILURES, clean_adjusted
 
 HOLD, SLOTS, TOP = 5, 5, 10
 COST_TOP100, COST_REST = 0.0004, 0.0008  # per side
@@ -33,9 +33,16 @@ class Market:
     last_row: np.ndarray  # last row with data per symbol
     failed_after: dict[int, int] = field(default_factory=dict)  # symbol column -> last listed row (known failures)
     volume: np.ndarray | None = None  # split-adjusted share volume
+    adjustment_flags: pd.DataFrame | None = None  # data.adjustment_flags of the bars (None when not cleaned)
 
     @classmethod
-    def from_frames(cls, adjusted: pd.DataFrame, raw: pd.DataFrame) -> "Market":
+    def from_frames(cls, adjusted: pd.DataFrame, raw: pd.DataFrame, *, clean: bool = True) -> "Market":
+        """``clean`` applies the adjustment cleaning rule (data.clean_adjusted, docs/10-shortterm/DATA_CLEANING.md);
+        ``clean=False`` gives the uncleaned arrays the studies registered before 2026-10-22 were run on."""
+        flags = None
+        if clean:
+            adjusted, flags = clean_adjusted(adjusted, raw)
+
         def wide(df, col):
             d = df.assign(day=df["timestamp"].dt.tz_convert("America/New_York").dt.date)
             return d.pivot_table(index="day", columns="symbol", values=col, aggfunc="last")
@@ -53,7 +60,7 @@ class Market:
             if s in until and last[j] >= 0 and days[last[j]] <= until[s]:
                 failed[j] = int(last[j])
         return cls(days, syms, o.to_numpy(dtype=float), oc, rc.to_numpy(dtype=float), last, failed,
-                   v.to_numpy(dtype=float))
+                   v.to_numpy(dtype=float), flags)
 
 
 def lagged_return(close: np.ndarray, k: int) -> np.ndarray:

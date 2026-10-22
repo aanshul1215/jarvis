@@ -1,5 +1,18 @@
 # JARVIS execution register
 
+## Short-horizon data cleaning — 2026-10-22
+
+Rule and results: [docs/10-shortterm/DATA_CLEANING.md](docs/10-shortterm/DATA_CLEANING.md).
+
+| Item | Status | Evidence |
+|---|---|---|
+| Adjusted vs raw check (`jarvis shortterm-check`) | TESTED LOCALLY + REAL FILES | `test_adjustment_check_flags_unexplained_gaps_and_marks_the_vendor_made_ones`; on the 2026-10-22 files: research 155 flagged / 13 spurious, live 3 / 0 ([list](docs/10-shortterm/adjustment_flags_2026-10-22.csv)) |
+| Cleaning in `Market.from_frames` (research and live stock book) | TESTED LOCALLY + REAL FILES | `test_cleaning_undoes_only_the_vendor_made_jump_and_keeps_other_adjustments`; research file: the 13 spurious days removed, no new flags, the other 1,031 symbols unchanged, 5 s |
+| DOW missing from `daily_*` | ROOT CAUSE REPRODUCED (ACCOUNT-CONNECTED DATA API); CODE FIXED; RESEARCH FILE NOT REWRITTEN | 100-symbol request returns 99 symbols, no error; DOW alone returns 2,714 bars. `test_fetch_bars_asks_again_for_a_symbol_left_out_of_a_long_answer` |
+| XLRE absent from the store | BACK-FILLED ONCE (2,716 bars, 2016-01-04 to 2026-10-21); NOT IN THE DAILY UNIVERSE | Never in `config/universe.json` (VNQ is the real-estate ETF); adding it is an owner decision |
+| Live stock-book targets after cleaning | UNCHANGED (read-only check, no orders) | 2026-10-19 decision, data to 2026-10-20: 303 names, identical weights with and without cleaning |
+| Full test suite | PASSED (Windows 11, Python venv) | `pytest -q`: 151 passed, 13 warnings (existing NaN-slice RuntimeWarnings and the websockets deprecation), 23 min |
+
 ## Phase 1 foundation fixes — 2026-10-19
 
 Branch `phase1/foundation-fixes` from `feature/jarvis-v1-implementation` (`3de6c82`). Plan: [Final workflow](https://github.com/aanshul1215/jarvis/blob/main/Final%20workflow(feedback%20requierd).md), Phase 1.
