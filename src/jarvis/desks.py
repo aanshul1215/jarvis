@@ -98,7 +98,10 @@ class StockBookBuilder:
         raw = pd.read_parquet(folder / "live_daily_raw.parquet")
         self.universe = json.loads((folder / "universe_top300.json").read_text())
         groups = {s: v["group"] for s, v in json.loads((folder / "sic.json").read_text()).items()}
-        m = Market.from_frames(adjusted, raw)
+        m = Market.from_frames(adjusted, raw)  # adjusted bars cleaned (docs/10-shortterm/DATA_CLEANING.md)
+        flags = m.adjustment_flags
+        fixed = [] if flags is None else flags[flags["spurious"]].itertuples()
+        self.data_fixes = [f"{f.symbol} {f.timestamp.tz_convert('America/New_York').date()}" for f in fixed]
         etfs = load_etfs(store, m.dates, DEFENSIVE + (SAFE, "SPY"))
         self.inst = combine(m, etfs)
         rates = known_rate(m.dates, {r["observation_date"]: r["value"] for r in load_macro(store, "DTB3")})
@@ -129,7 +132,7 @@ class StockBookBuilder:
         return weights, {"decision_row_date": self.dates[self.t].isoformat(), "method": self.method,
                          "rebalance_day": self.is_rebalance_day(), "names": len(weights),
                          "sleeve": self.report.get("sleeve_months"),
-                         "universe_month_missing": self.missing_month}
+                         "universe_month_missing": self.missing_month, "adjusted_data_fixes": self.data_fixes}
 
 
 def desk_status(main_home: Path) -> dict:

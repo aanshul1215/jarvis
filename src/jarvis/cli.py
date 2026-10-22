@@ -98,8 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("doctor", "demo", "alpaca-check", "dashboard", "paper", "backtest", "train", "review", "info-ingest",
                  "soak", "macro-update", "backfill", "data-check", "edgar-update", "calendar-update", "model-study",
                  "cost-report", "selector-study", "collect", "score-news", "daily", "portfolio-study",
-                 "portfolio-targets", "portfolio-paper", "shortterm-update", "desk", "performance", "golden",
-                 "desk-status"):
+                 "portfolio-targets", "portfolio-paper", "shortterm-update", "shortterm-check", "desk", "performance",
+                 "golden", "desk-status"):
         command = commands.add_parser(name)
         if name in ("backfill", "data-check", "edgar-update"):
             command.add_argument("--universe", required=True, help="universe JSON (see config/universe.example.json)")
@@ -137,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
                                  help="core: round 5 trend-filtered momentum core, every period at once")
         if name == "portfolio-paper":
             command.add_argument("--enable-orders", action="store_true", help="required to place paper orders")
+        if name == "shortterm-check":
+            command.add_argument("--csv", help="also write every flagged symbol-day to this CSV file")
         if name == "desk":
             command.add_argument("--desk", required=True, choices=("sector", "stockbook"))
             command.add_argument("--universe", required=True, help="universe JSON (ETF data for the sector desk)")
@@ -457,6 +459,28 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"result": "BLOCKED", "reason": "market data needs the paper keys in the environment"}))
             return 2
         print(json.dumps(update(_home(args), key, secret), indent=2, default=str))
+        return 0
+    elif args.command == "shortterm-check":
+        import pandas as pd
+        from .shortterm.data import adjustment_flags
+        folder, report, tables = _home(args) / "shortterm", {}, []
+        for name in ("daily", "live_daily"):  # research and live stock-book bars; read only
+            paths = [folder / f"{name}_{kind}.parquet" for kind in ("adjusted", "raw")]
+            if not all(p.exists() for p in paths):
+                continue
+            flags = adjustment_flags(pd.read_parquet(paths[0]), pd.read_parquet(paths[1]))
+            flags.insert(0, "file", name)
+            tables.append(flags)
+            report[name] = {"flagged": len(flags), "spurious_cleaned_on_load": int(flags["spurious"].sum()),
+                            "spurious": [f"{f.symbol} {f.timestamp.tz_convert('America/New_York').date()} "
+                                         f"adjusted {f.r_adj:+.1%} raw {f.r_raw:+.1%}"
+                                         for f in flags[flags["spurious"]].itertuples()]}
+        if args.csv and tables:
+            out = pd.concat(tables, ignore_index=True)
+            for c in ("timestamp", "previous"):
+                out[c] = out[c].dt.tz_convert("America/New_York").dt.date
+            out.rename(columns={"timestamp": "day"}).to_csv(args.csv, index=False, float_format="%.6f")
+        print(json.dumps(report, indent=2))
         return 0
     elif args.command == "desk":
         return _desk(args)
