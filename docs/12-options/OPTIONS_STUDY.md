@@ -178,3 +178,33 @@ Literature-sized edges would need decades of trades at this rate. **The negative
 - **Use options only as free information:** a daily log of implied volatility and skew for the top 300.
 - **ORATS ($199) is not justified at the current account size.** If bought later, use it for one pre-registered stock-book test: the 30-day put smirk as a monthly screen to drop the top decile, 2008–2026.
 - **C2-K (Kronos)** will be scored when its forecasts finish, on both the binding and the imputed trade sets. To matter it must beat IV's forecast accuracy (correlation 0.82), not just HAR's (0.73).
+
+## Result: C2-K, the Kronos challenger (development; scored 2026-10-23; `JARVIS_TEMP/kronos/score_c2k.py`, `c2k_dev_results.txt`)
+
+**Coverage:** 12 cycles (entries 2024-07 to 2025-06; expiries 2024-08-16 to 2025-07-18), 729 Kronos forecasts. Every name-cycle in the C2 ranking universe (425) had one. Ranking used ATM IV ÷ the Kronos forecast, with the other C2 rules unchanged. Both sets were scored: the binding opt3 trades and the red team's imputed all-entered trades.
+
+Mean net return per trade at base cost, with month-clustered t:
+
+| Ranking | C2-sell, binding | C2-sell, imputed | C2-buy, binding | C2-buy, imputed |
+|---|---|---|---|---|
+| IV ÷ HAR (same 12 cycles) | +19.4% (t 1.54, n 23) | −22.0% (t −1.48, n 61) | −9.3% (t −0.64, n 55) | +10.0% (t 0.63, n 86) |
+| IV ÷ Kronos | +18.6% (t 1.19, n 24) | −17.8% (t −1.71, n 57) | −2.9% (t −0.29, n 56) | +19.3% (t 1.32, n 86) |
+| Kronos vs. its −all benchmark | +14.0 pts (t 1.08) | +3.3 pts (t 0.52) | +14.2 pts (t 3.28) | +14.4 pts (t 2.49) |
+
+**Decision: C2-K FAILS** the registered rule in every family and trade set. No mean return is positive with t ≥ 2, so it is not adopted, no holdout forecasts were computed, and the holdout was not run.
+
+**One pattern, reported but not adopted:** the Kronos ranking's cheapest names gave straddles that beat buying straddles on every name. It is one finding among many trials on 12 cycles, and the straddles themselves did not make money in the binding set.
+
+**Forecast accuracy** against realised close-to-close volatility over the holding period, on the same 425 name-cycles:
+
+| Forecast | Correlation | Rank correlation | Bias | Mean absolute error |
+|---|---|---|---|---|
+| ATM implied volatility | **0.81** | 0.83 | −1.3 pts | 12.5 pts |
+| HAR (daily ranges) | 0.73 | 0.77 | −9.0 pts | 15.0 pts |
+| Kronos-small | 0.62 | 0.66 | +2.9 pts | 19.3 pts |
+
+Within each cycle, the rank correlation is 0.88 for IV, 0.86 for HAR and 0.71 for Kronos. In a regression of log realised vol on log IV and log Kronos, the coefficients are 0.95 and 0.09. Kronos adds a little at the margin (t 2.2 by plain OLS, which is optimistic), but it is a clearly worse forecast than the option market's own price.
+
+**Task 1 is complete:**
+- The option-trading decision above stands.
+- Kronos is not used for volatility.
