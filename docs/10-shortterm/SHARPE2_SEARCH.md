@@ -120,3 +120,11 @@
   - a retest on ranks 301–1,500;
   - the Kronos crypto challenger (D1-K);
   - the intraday execution engine.
+
+## Data added (local, in `JARVIS_HOME/shortterm/`, each with a SHA-256 manifest; never in the repository)
+
+- **`universe_top1500.json`:** point-in-time monthly top-1,500 lists, built with the same candidate rules as the top 300. 31 of 38,700 top-300 stock-month slots lack bars.
+- **`daily_adjusted_ext.parquet`, `daily_raw_ext.parquet`:** daily bars for the 2,518 extra symbols. Also `monthly_bars_ext.parquet`.
+- **`intraday30_ext/`:** 30-minute regular-session bars for the 790 symbols not in `intraday30` (2016–2026), about 23.4 million rows. Unlike the old `intraday30` filter, it drops after-hours bars on early-close days.
+  - **Gaps:** 139 symbols have sessions with no 30-minute bars (12,196 sessions in total, about 0.6%). They are mostly thinly traded or renamed listings. Any study using this data should drop those symbol-days.
+- **`orb/`:** opening 5-minute bars for the top-1,500 universe and 1-minute bars for each day's ORB selections. About 3,300 bars were recovered by single-symbol requests.
