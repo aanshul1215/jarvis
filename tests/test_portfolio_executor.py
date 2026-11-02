@@ -246,3 +246,39 @@ def test_desk_status_summarises_each_desk_from_its_own_journal(tmp_path):
     sector = status["sector"]
     assert sector["status"] == "RUNNING" and sector["orders_last_cycle"] == 2 and sector["cycles"] == 1
     assert sector["order_updates"] == {} and sector["policy"] == "owner-2026-10-21-sector" and sector["build_complete"]
+
+
+def test_a_missed_rebalance_is_made_up_by_the_next_run_with_the_market_open(tmp_path):
+    class Decided(FixedTargets):
+        def __init__(self, weights, decision, today_is_decision):
+            super().__init__(weights)
+            self.decision, self.today = decision, today_is_decision
+
+        def is_rebalance_day(self):
+            return self.today
+
+        def decision_date(self):
+            return self.decision
+
+    class Toggle(MockBroker):
+        is_open = True
+
+        def equity_market_open(self):
+            return self.is_open
+
+    with LocalStorage(tmp_path / "d") as store:
+        broker = Toggle(cash=10_000)
+        d = PortfolioDesk(store, broker, Quotes(), policy(approved_strategies=("sector_rotation",)), UNIVERSE,
+                          strategy_id="sector_rotation", use_brake=False)
+        d.run_once(Decided({"SPY": 0.3}, "2026-10-01", True), decision_day="2026-10-02")
+        assert store.load_json("portfolio-last-rebalance")["decision_row_date"] == "2026-10-01"
+        broker.is_open = False                                       # November's trading day: the market is closed
+        closed = d.run_once(Decided({"SPY": 0.0, "TLT": 0.3}, "2026-11-02", True), decision_day="2026-11-03")
+        assert closed["orders"] == 0 and set(closed["skipped"].values()) == {"MARKET_CLOSED"}
+        assert store.load_json("portfolio-last-rebalance")["decision_row_date"] == "2026-10-01"
+        broker.is_open = True                                        # next day: not a decision day, but it catches up
+        caught = d.run_once(Decided({"SPY": 0.0, "TLT": 0.3}, "2026-11-02", False), decision_day="2026-11-04")
+        assert caught["diagnostics"]["catch_up_rebalance"] == "2026-11-02" and caught["orders"] == 2
+        assert broker.positions["SPY"] == 0 and broker.positions["TLT"] > 0
+        held = d.run_once(Decided({"SPY": 0.3}, "2026-11-02", False), decision_day="2026-11-05")
+        assert held["orders"] == 0 and held["note"] == "not a rebalance day; holding"

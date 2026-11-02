@@ -72,6 +72,12 @@ class SectorBuilder:
 
         return self.t in set(month_starts(self.book.panel.dates))
 
+    def decision_date(self) -> str:
+        """The latest monthly decision row (first session of the month) at or before today's data."""
+        from .portfolio.ranker import month_starts
+
+        return self.book.panel.dates[max(r for r in month_starts(self.book.panel.dates) if r <= self.t)].isoformat()
+
     def instruments(self) -> list[UniverseAsset]:
         return [UniverseAsset(a, AssetClass.EQUITY) for a in self.book.panel.assets if "/" not in a]
 
@@ -116,6 +122,11 @@ class StockBookBuilder:
 
     def is_rebalance_day(self) -> bool:
         return not self.missing_month and self.decided.get(self.t) is not None
+
+    def decision_date(self) -> str | None:
+        """The latest weekly (or monthly) decision row at or before today's data."""
+        latest = [t for t in self.decided if self.decided[t] is not None and t <= self.t]
+        return self.dates[max(latest)].isoformat() if latest and not self.missing_month else None
 
     def approved(self) -> set[str]:
         from .shortterm.book import DEFENSIVE, SAFE

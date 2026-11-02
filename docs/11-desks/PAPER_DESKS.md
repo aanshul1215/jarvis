@@ -85,3 +85,15 @@ Recordings contain exchange and FRED data, so they stay local and never go into 
 - `jarvis-status`: desks against SPY, today's run, and anything that needs the owner.
 - `jarvis-preflight`: tests, golden days, data freshness, the scheduler, credentials (names only), the pyarrow pin and repository hygiene.
 - `jarvis-study`: the pre-registered study protocol, with a template and a red-team checklist.
+
+## Schedule fix and catch-up rebalance (2026-11-02)
+
+**Clock change.** The "JARVIS daily" trigger was stored as a fixed UTC time (09:00 −05:00). When clocks went back on 2026-11-01 it moved to 08:00 local, which is 09:00 New York, half an hour before the open. The desks would then have skipped every order as `MARKET_CLOSED`, including the sector desk's November rebalance.
+- With the owner's approval, the trigger now stores a plain local time: weekdays at **09:00 Central, 10:00 New York, all year**.
+- Wake-to-run and start-when-available are unchanged.
+
+**Catch-up rebalance.**
+- Each desk records the decision row of its last rebalance that ran with the market open, in `config/portfolio-last-rebalance.json`.
+- When the builder's latest decision is newer (`SectorBuilder.decision_date`: the first session of the month; `StockBookBuilder.decision_date`: the latest weekly decision), the next run rebalances even though it is not the scheduled day.
+- So a missed trading day (laptop off, market closed, a failed data step) no longer leaves the sector desk on last month's sectors.
+- Seeded 2026-11-02: sector 2026-10-01 (October's targets, built 2026-10-21); stock book 2026-10-26 (traded 2026-10-27).

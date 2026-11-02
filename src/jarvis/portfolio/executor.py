@@ -40,6 +40,10 @@ from .situation import FEATURES
 BUY_LIMIT_MARGIN = 0.002
 EQUITY_HISTORY = "portfolio-equity-history"  # the desk's equity per decision day, for the drawdown control
 BUILD_COMPLETE = "desk-build-complete"  # written after a new desk's first full pass with nothing skipped
+# The decision row of the last rebalance that ran with the market open. A builder that names its latest decision
+# (``decision_date``) gets a catch-up rebalance when that decision is newer: a missed run on the trading day (laptop
+# off, market closed) must not leave the desk on last month's or last week's targets.
+LAST_REBALANCE = "portfolio-last-rebalance"
 
 
 class TargetBuilder:
@@ -137,6 +141,12 @@ class PortfolioDesk:
             self.store.publish_json(EQUITY_HISTORY, {"equity": history})
         peak = max(e for _, e in history)
         return 1 - capital / peak if peak > 0 else 0.0
+
+    def _last_rebalance(self) -> str | None:
+        try:
+            return self.store.load_json(LAST_REBALANCE)["decision_row_date"]
+        except FileNotFoundError:
+            return None  # never recorded: no catch-up until the first rebalance writes it
 
     def _built(self) -> bool:
         try:
@@ -272,6 +282,11 @@ class PortfolioDesk:
         diagnostics = {**diagnostics, "all_time_drawdown": state.drawdown}
         self._event("PORTFOLIO_TARGET", {"capital": capital, "weights": weights, **diagnostics})
         rebalance = getattr(builder, "is_rebalance_day", lambda: True)()
+        decision = getattr(builder, "decision_date", lambda: None)()
+        done = self._last_rebalance()
+        if not rebalance and decision and done and decision > done:
+            rebalance = True  # the rebalance for this decision was missed: catch up now
+            diagnostics = {**diagnostics, "catch_up_rebalance": decision, "last_rebalance": done}
         building = not self._built()
         if not rebalance and building:
             rebalance = True  # a new desk keeps building its target positions until one full pass skips nothing
@@ -322,6 +337,9 @@ class PortfolioDesk:
         if building and not report.halted and set(report.skipped.values()) <= {"BELOW_ONE_DOLLAR"}:
             if getattr(self.store, "durable", True):
                 self.store.publish_json(BUILD_COMPLETE, {"day": decision_day, "orders": len(report.planned)})
+        if rebalance and decision and "MARKET_CLOSED" not in report.skipped.values():
+            if getattr(self.store, "durable", True):
+                self.store.publish_json(LAST_REBALANCE, {"decision_row_date": decision, "day": decision_day})
         summary = {"capital": capital, "halted": report.halted, "orders": len(report.planned),
                    "cancelled_open_orders": len(cancelled), "results": report.results, "skipped": report.skipped,
                    "planned": [{"asset": o.asset, "side": o.side, "quantity": o.quantity, "kind": o.kind,
